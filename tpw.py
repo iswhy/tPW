@@ -1,7 +1,7 @@
-
+from dataclasses import dataclass
 import math, scipy, time
 import numpy as np
-#from aopwints import integral_mix_edit as aopw_xa
+from aopwints_xa import integral_mix_edit as aopw_xa
 import cint_gpw as aopw_xn
 from pyscf import scf, gto, ao2mo
 from pyscf.tools import fcidump
@@ -51,7 +51,7 @@ def ovlp_tpw_1d(kvec, xl, xr, w):
 
 
 #============================================================
-def kin_tpw_1d(kvec, *, Sreg=None, xl=None, xr=None, w=None):
+def kin_tpw_1d(kvec, w, *, Sreg=None, xl=None, xr=None):
 
     if Sreg is None:
         if all([var is not None for var in (xl, xr, w)]):
@@ -142,9 +142,9 @@ def get_ovlp(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf=None):
     nb = nao + len(pw_k)
     S = np.zeros((nb,nb), dtype=complex)
 
-    S[:nao, :nao] = mol.intor('int1e_ovlp_sph', hermi=1)
+    S[:nao, :nao] = mol.intor('int1e_ovlp_sph')
 
-    S[:nao, nao:] = get_ovlp_cross(mol, pw_k, xlim, ylim, zlim, w):
+    S[:nao, nao:] = get_ovlp_cross(mol, pw_k, xlim, ylim, zlim, w)
     S[nao:, :nao] = S[:nao, nao:].conj().T
     
     S[nao:, nao:] = get_ovlp_tpw(kxvec, kyvec, kzvec, xlim, ylim, zlim, w)
@@ -177,17 +177,17 @@ def get_kin_tpw_cart(kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None,
 
     if Sx is None:
         Sx = ovlp_tpw_1d(kxvec, xlim[0], xlim[1], w)
-    Tx_tpw = kin_tpw_1d(kxvec, Sreg=Sx)
+    Tx_tpw = kin_tpw_1d(kxvec, w, Sreg=Sx)
     Sx = np.sum(Sx, axis=0)   # ATT: Sx is now summed.
 
     if Sy is None:
         Sy = ovlp_tpw_1d(kyvec, ylim[0], ylim[1], w)
-    Ty_tpw = kin_tpw_1d(kyvec, Sreg=Sy)
+    Ty_tpw = kin_tpw_1d(kyvec, w, Sreg=Sy)
     Sy = np.sum(Sy, axis=0)   # ATT: Sy is now summed.
 
     if Sz is None:
         Sz = ovlp_tpw_1d(kzvec, zlim[0], zlim[1], w)
-    Tz_tpw = kin_tpw_1d(kzvec, Sreg=Sz)
+    Tz_tpw = kin_tpw_1d(kzvec, w, Sreg=Sz)
     Sz = np.sum(Sz, axis=0)   # ATT: Sz is now summed.
     
     return np.array([
@@ -216,7 +216,7 @@ def get_kin_cart(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None
     #^^ ip is nabla, not -i.nabla, which is the momentum. Hence ipip needs a -1 to become pp.
 
     T[:, :nao, nao:] = get_kin_cross_cart(mol, pw_k, xlim, ylim, zlim, w)
-    T[:, nao:, :nao] = T[:nao, nao:].conj().transpose(0, 2, 1)
+    T[:, nao:, :nao] = T[:, :nao, nao:].conj().transpose(0, 2, 1)
 
     T[:, nao:, nao:] = get_kin_tpw_cart(kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx, Sy, Sz)
 
@@ -234,7 +234,7 @@ def get_kin(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None, Sz=
     nb = nao + len(pw_k)
     T = np.zeros((nb,nb), dtype=complex)
 
-    T[:nao, :nao] = mol.intor('int1e_kin_sph', hermi=1)
+    T[:nao, :nao] = mol.intor('int1e_kin_sph')
 
     T[:nao, nao:] = get_kin_cross(mol, pw_k, xlim, ylim, zlim, w)
     T[nao:, :nao] = T[:nao, nao:].conj().T
@@ -263,7 +263,7 @@ def get_vnuc(mol, pw_k, xlim, ylim, zlim, w, cf=None):
     nb = nao + nk
     V = np.zeros((nb,nb), dtype=complex)
 
-    V[:nao, :nao] = mol.intor('int1e_nuc_sph', hermi=1)
+    V[:nao, :nao] = mol.intor('int1e_nuc_sph')
 
     V[:nao, nao:] = get_vnuc_cross(mol, pw_k, xlim, ylim, zlim, w)
     V[nao:, :nao] = V[:nao, nao:].conj().T
@@ -365,7 +365,7 @@ def get_momentum(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, S_tpw=None, cf=N
     nb = nao + len(pw_k)
     P = np.zeros((3,nb,nb), dtype=complex)
 
-    P[:, :nao, :nao] = -1j * mol.intor('int1e_ipovlp', hermi=1)
+    P[:, :nao, :nao] = -1j * mol.intor('int1e_ipovlp')
 
     P[:, :nao, nao:] = get_momentum_cross(mol, pw_k, xlim, ylim, zlim, w)
     P[:, nao:, :nao] = P[:, :nao, nao:].conj().transpose(0,2,1)
@@ -429,7 +429,7 @@ def orthogonalized_tpw(ortho, e_proj, canon_thr=1E-4, verb=0, *, S_tpw=None, kxv
 
 #============================================================
 def get_coupling(cf, S_cross_ao, T_mol_ao, T_cross_ao, V_mol_ao, V_cross_ao, g2e_mmmm,
-                 g2e_kbbb):
+                 g2e_kbbb, X):
     '''
     g2e_kbbb:
       2e integral objects INT2e of the type (P_k G_a|G_b G_c) (involves one PW and three
@@ -444,16 +444,16 @@ def get_coupling(cf, S_cross_ao, T_mol_ao, T_cross_ao, V_mol_ao, V_cross_ao, g2e
       with intor='int2e_sph' and aosym='s2ij'.
     '''
 
-    nao, nmo = cf.shape[1]
+    nao, nmo = cf.shape
     
     #==== Computation of 1e operator matrix ====#
     S_cross_mo = np.einsum('ij, ik -> jk', cf, S_cross_ao, optimize=True)
     h1e_mol_mo = np.einsum('ij, ik, kl -> jl', cf, T_mol_ao + V_mol_ao, cf, optimize=True)
     h1e_cross_mo = np.einsum('ij, ik -> jk', cf, T_cross_ao + V_cross_ao, optimize=True)
     #later dip_ao = get_dip_cross(mol, pw_k, op='r')
-    g2e_mmmm = g2e_mmmm.reshape((nmo*g2e_mmmm.shape[1], nmo), order='F')
+    g2e_mmmm = g2e_mmmm.reshape((nmo*g2e_mmmm.shape[0], nmo), order='F')
     #^^ At input, g2e_mmmm is a matrix of shape (nmo*(nmo+1)/2, nmo^2), so, we use order='F' to match
-    # the index ordering of the rows of gwe_mmmm to that of g2e_mmmk. In this reordering, the first nmo
+    # the index ordering of the rows of g2e_mmmm to that of g2e_mmmk. In this reordering, the first nmo
     # columns are stacked on top of each other to form the first column of the reordered matrix. The
     # remaining columns are reordered accordingly.
 
@@ -493,8 +493,8 @@ def effective_tpw(d_ortho, e_ortho, cf, mol, sv_thr=-1, verb=0, *, S_cross_ao=No
                  w=None):
 
 
-    T_mol_ao = mol.intor('int1e_kin_sph', hermi=1)
-    V_mol_ao = mol.intor('int1e_nuc_sph', hermi=1)
+    T_mol_ao = mol.intor('int1e_kin_sph')
+    V_mol_ao = mol.intor('int1e_nuc_sph')
     g2e_mmmm = ao2mo.kernel(mol, cf, intor='int2e_sph', aosym='s2ij')
     #^^ g2e_mmmm is a matrix, 's2ij' means the first two indices form independent pairs,
     # nao*(nao+1)/2. The last two indices  cover all pairs, nao*nao.
@@ -510,20 +510,24 @@ def effective_tpw(d_ortho, e_ortho, cf, mol, sv_thr=-1, verb=0, *, S_cross_ao=No
                 M = getfunc(*args, **kwargs)
             else:
                 raise ValueError(f'code {code}: Inconsistent arguments passed to {getfunc.__name__}.')
-            if verb >= 1:
-                print(f'Time spent for calling {getfunc.__name__} = {time.time()-thistime:.3f}')
-                thistime = time.time()
         return M
 
     S_cross_ao = _check_existence(S_cross_ao, get_ovlp_cross, 0, mol, pw_k, xlim, ylim, zlim, w)
     T_cross_ao = _check_existence(T_cross_ao, get_kin_cross, 1, mol, pw_k, xlim, ylim, zlim, w)
     V_cross_ao = _check_existence(V_cross_ao, get_vnuc_cross, 2, mol, pw_k, xlim, ylim, zlim, w)
+    if verb >= 1:
+        print(f'Time spent for computing 1e integrals = {time.time()-thistime:.3f}')
+        thistime = time.time()
     g2e_kbbb = _check_existence(g2e_kbbb, get_v2e, 3, mol, pw_k, xlim, ylim, zlim, w, ['kbbb'])
+    if verb >= 1:
+        print(f'Time spent for computing 2e integrals = {time.time()-thistime:.3f}')
+        thistime = time.time()
     if isinstance(g2e_kbbb, dict):
         g2e_kbbb = g2e_kbbb['kbbb']
-        
+
+    X = d_ortho
     G = get_coupling(cf, S_cross_ao, T_mol_ao, T_cross_ao, V_mol_ao, V_cross_ao, g2e_mmmm,
-                     g2e_kbbb)
+                     g2e_kbbb, X)
     #G = np.random.rand(G.shape[0],G.shape[1])-0.5 + 1j*(np.random.rand(G.shape[0],G.shape[1])-0.5)
     #use the line above and the effective PW becomes complex.
     U, sv, Vt = scipy.linalg.svd(G, full_matrices=False)
@@ -624,10 +628,10 @@ def analyze(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf, e_proj=None, d_or
 
     #--------------------------------------------------------
     def _print_orthonormal(ovlp):
-        ds = np.sum(np.diag(ovlp)[nmo:])
+        ds = np.sum(np.diag(ovlp))
         ods = np.sum(ovlp) - ds
-        print('    Sum of diagonals = %.10e' % ds)
-        print('    Sum of off-diagonals = %.10e' % ods)
+        print('    Sum of diagonals = (%.10e, %.10ej)' % (ds.real, ds.imag))
+        print('    Sum of off-diagonals = (%.10e, %.10ej)' % (ods.real, ods.imag))
         return
     #--------------------------------------------------------
 
@@ -669,7 +673,7 @@ def analyze(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf, e_proj=None, d_or
             print('%4s  %14s' % ('No.', 'S. values'), end='')
         else:
             print('%4s' % 'No.', end='')
-        print('  %19s %11s  %19s %11s  %19s %11s' % ('Re.<T>', 'Im.<T>', 'Re.<T> (eV)'),
+        print('  %19s  %19s  %19s' % ('Re.<T>', 'Im.<T>', 'Re.<T> (eV)'),
               flush=True)
         for i in range(nstates):
             t0 = M_expec[i]
@@ -677,7 +681,7 @@ def analyze(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf, e_proj=None, d_or
                 print('%4d  %14.6e' % (i, sv[i]), end='')
             else:
                 print('%4d' % i, end='')
-            print('  %19.11e  %19.11e  %19.11e' % (t0.real, t0.imag, t0.real*27.2113860200)
+            print('  %19.11e  %19.11e  %19.11e' % (t0.real, t0.imag, t0.real*27.2113860200),
                   flush=True)
         return
     #--------------------------------------------------------
@@ -703,40 +707,47 @@ def analyze(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf, e_proj=None, d_or
     #==== Get the necessary operators ====#
     S = get_ovlp(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf=cf)
     P = get_momentum(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf=cf)
+    print('P hermi = %.10e %.10ej' % (np.sum(P[0]).real/P[0].size, (np.sum(P[0]).imag/P[0].size)))
+    print('P hermi = %.10e %.10ej' % (np.sum(P[1]).real/P[0].size, (np.sum(P[1]).imag/P[0].size)))
+    print('P hermi = %.10e %.10ej' % (np.sum(P[2]).real/P[0].size, (np.sum(P[2]).imag/P[0].size)))
     Sx = ovlp_tpw_1d(kxvec, xlim[0], xlim[1], w)
     Sy = ovlp_tpw_1d(kyvec, ylim[0], ylim[1], w)
     Sz = ovlp_tpw_1d(kzvec, zlim[0], zlim[1], w)
     P2 = 2 * get_kin_cart(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=Sx, Sy=Sy, Sz=Sz,
                           cf=cf)
+
+    print('P2 hermi = %.10e %.10ej' % (np.sum(P2[0]).real/P2[0].size, (np.sum(P2[0]).imag/P2[0].size)))
+    print('P2 hermi = %.10e %.10ej' % (np.sum(P2[1]).real/P2[0].size, (np.sum(P2[1]).imag/P2[0].size)))
+    print('P2 hermi = %.10e %.10ej' % (np.sum(P2[2]).real/P2[0].size, (np.sum(P2[2]).imag/P2[0].size)))
     T = get_kin(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=Sx, Sy=Sy, Sz=Sz, cf=cf)
     
     
     #==== II Orthonormality checks ====#
     print('\nI.1 Orthonormality checks of tapered PWs:')
-    _print_orthonormal(S)
+    _print_orthonormal(S[nmo:,nmo:])
 
     if e_proj is not None:
         cf_proj = np.vstack((e_proj, np.eye(nk, dtype=complex)))
-        S_proj = np.einsum('ij,ik,kl->jl', cf_proj.conj(), S, cf_proj)
+        S_proj = np.einsum('ij,ik,kl->jl', cf_proj.conj(), S, cf_proj, optimize=True)
         print('\nI.2 Orthonormality checks of projected tPWs:')
         _print_orthonormal(S_proj)
 
     if d_ortho is not None and e_ortho is not None:
         cf_ortho = np.vstack((e_ortho, d_ortho))
-        S_ortho = np.einsum('ij,ik,kl->jl', cf_ortho.conj(), S, cf_ortho)
+        S_ortho = np.einsum('ij,ik,kl->jl', cf_ortho.conj(), S, cf_ortho, optimize=True)
         print('\nI.3 Orthonormality checks of orthogonalized PWs:')
         _print_orthonormal(S_ortho)
 
     if d_eff is not None and e_eff is not None:
         cf_eff = np.vstack((e_eff, d_eff))
-        S_eff = np.einsum('ij,ik,kl->jl', cf_eff.conj(), S, cf_eff)
+        S_eff = np.einsum('ij,ik,kl->jl', cf_eff.conj(), S, cf_eff, optimize=True)
         print('\nI.4 Orthonormality checks of effective PWs:')
         _print_orthonormal(S_eff)
 
     
     #==== II.1 <P> and sigma(P) of tPWs ====#
-    P_expec_tpw = np.diag(P)[nmo:]
-    P2_expec_tpw = np.diag(P2)[nmo:]
+    P_expec_tpw = np.diagonal(P, axis1=1, axis2=2).T[nmo:,:]
+    P2_expec_tpw = np.diagonal(P2, axis1=1, axis2=2).T[nmo:,:]
     print('\nII.1 Momentum expectation values and std. deviations of tapered PWs:')
     nk_tpw = nk if nk_tpw is None else min(nk,nk_tpw)
     _print_ptable(P_expec_tpw, P2_expec_tpw, nk_tpw)
@@ -744,10 +755,10 @@ def analyze(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf, e_proj=None, d_or
     #==== II.2 <P> and sigma(P) of projected tPWs ====#
     if e_proj is not None:
         proj_norm = np.sqrt( np.diag(S_proj).copy().real )
-        P_expec_proj = np.einsum('ij,dik,kj->jd', cf_proj.conj(), P, cf_proj, optimize=True) / \
-            proj_norm**2
-        P2_expec_proj = np.einsum('ij,dik,kj->jd', cf_proj.conj(), P2, cf_proj, optimize=True) / \
-            proj_norm**2
+        P_expec_proj = np.einsum('ij,dik,kj,j->jd', cf_proj.conj(), P, cf_proj, 1/proj_norm**2,
+                                 optimize=True)
+        P2_expec_proj = np.einsum('ij,dik,kj,j->jd', cf_proj.conj(), P2, cf_proj, 1/proj_norm**2,
+                                  optimize=True)
         nk_proj = cf_proj.shape[1] if nk_proj is None else min(cf_proj.shape[1],nk_proj)
         print('\nII.2 Momentum expectation values and std. deviations of projected tPWs:')
         _print_ptable(P_expec_proj, P2_expec_proj, nk_proj)
@@ -765,7 +776,7 @@ def analyze(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf, e_proj=None, d_or
         P_expec_eff = np.einsum('ij,dik,kj->jd', cf_eff.conj(), P, cf_eff, optimize=True)
         P2_expec_eff = np.einsum('ij,dik,kj->jd', cf_eff.conj(), P2, cf_eff, optimize=True)
         nk_eff = cf_eff.shape[1] if nk_eff is None else min(cf_eff.shape[1],nk_eff)
-        print('\nI.4 Momentum expectation values and std. deviations of effective tPWs:')
+        print('\nII.4 Momentum expectation values and std. deviations of effective tPWs:')
         _print_ptable(P_expec_eff, P2_expec_eff, nk_eff, sv=sv)
 
     
@@ -776,20 +787,20 @@ def analyze(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf, e_proj=None, d_or
     
     #==== III.2 <T> of projected tPWs ====#
     if e_proj is not None:
-        T_expec_proj = np.einsum('ij,dik,kj->jd', cf_proj.conj(), T, cf_proj, optimize=True) / \
+        T_expec_proj = np.einsum('ij,ik,kj->j', cf_proj.conj(), T, cf_proj, optimize=True) / \
             proj_norm**2
         print('\nIII.2 Kinetic energy expectation values of projected tPWs:')
         _print_ttable(T_expec_proj, nk_proj)
     
     #==== III.3 <T> of orthogonalized tPWs ====#
     if d_ortho is not None and e_ortho is not None:
-        T_expec_ortho = np.einsum('ij,dik,kj->jd', cf_ortho.conj(), T, cf_ortho, optimize=True)
+        T_expec_ortho = np.einsum('ij,ik,kj->j', cf_ortho.conj(), T, cf_ortho, optimize=True)
         print('\nIII.3 Kinetic energy expectation values of orthogonalized tPWs:')
         _print_ttable(T_expec_ortho, nk_ortho)
 
     #==== III.4 <T> of effective tPWs ====#
     if d_eff is not None and e_eff is not None:
-        T_expec_eff = np.einsum('ij,dik,kj->jd', cf_eff.conj(), T, cf_eff, optimize=True)
+        T_expec_eff = np.einsum('ij,ik,kj->j', cf_eff.conj(), T, cf_eff, optimize=True)
         print('\nIII.4 Kinetic energy expectation values of effective tPWs:')
         _print_ttable(T_expec_eff, nk_eff, sv=sv)    
 
