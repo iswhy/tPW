@@ -7,13 +7,26 @@ from pyscf import scf, gto, ao2mo
 from pyscf.tools import fcidump
 
 
-    
+#============================================================
+INTS_ALGO = 'xa'
+#============================================================
+
 
 #=============================================================
 @dataclass
 class INT2e:
     index: tuple[int, int, int, int]
     value: complex
+#============================================================
+
+
+#============================================================
+def set_algo(a):
+    assert a.lower() == 'xa' or a.lower() == 'xn', \
+        f'set_algo only accepts "xa" or "xn", but "{a}" is given.'
+    global INTS_ALGO
+    INTS_ALGO = a
+    return
 #============================================================
 
 
@@ -120,8 +133,11 @@ def get_ovlp_cross(mol, pw_k, xlim, ylim, zlim, w):
     '''
     
     Volume = (xlim[1]-xlim[0]+2*w) * (ylim[1]-ylim[0]+2*w) * (zlim[1]-zlim[0]+2*w)
-    with aopw_xn.prepare(mol) as opt:
-        return aopw_xn.ovlp(mol, pw_k, opt=opt).T / np.sqrt(Volume)
+    if INTS_ALGO == 'xa':
+        return aopw_xa.ao_pw_ovlp(mol, pw_k) / np.sqrt(Volume)
+    elif INTS_ALGO == 'xn':
+        with aopw_xn.prepare(mol) as opt:
+            return aopw_xn.ovlp(mol, pw_k, opt=opt).T / np.sqrt(Volume)
 #============================================================
 
 
@@ -167,8 +183,12 @@ def get_kin_cross_cart(mol, pw_k, xlim, ylim, zlim, w):
 #============================================================
 def get_kin_cross(mol, pw_k, xlim, ylim, zlim, w):
     Volume = (xlim[1]-xlim[0]+2*w) * (ylim[1]-ylim[0]+2*w) * (zlim[1]-zlim[0]+2*w)
-    with aopw_xn.prepare(mol) as opt:
-        return aopw_xn.kin(mol, pw_k, opt=opt).T / np.sqrt(Volume)
+    if INTS_ALGO == 'xa':
+        pw_kin = 0.5 * np.einsum("pi,pi->p", pw_k, pw_k)
+        return aopw_xa.ao_pw_ovlp(mol, pw_k) * pw_kin[None,:] / np.sqrt(Volume)
+    elif INTS_ALGO == 'xn':
+        with aopw_xn.prepare(mol) as opt:
+            return aopw_xn.kin(mol, pw_k, opt=opt).T / np.sqrt(Volume)
 #============================================================
 
 
@@ -251,8 +271,11 @@ def get_kin(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None, Sz=
 #============================================================
 def get_vnuc_cross(mol, pw_k, xlim, ylim, zlim, w):
     Volume = (xlim[1]-xlim[0]+2*w) * (ylim[1]-ylim[0]+2*w) * (zlim[1]-zlim[0]+2*w)
-    with aopw_xn.prepare(mol) as opt:
-        return aopw_xn.nuc(mol, pw_k, opt=opt).T / np.sqrt(Volume)
+    if INTS_ALGO == 'xa':
+        return aopw_xa.ao_pw_pot(mol, pw_k) / np.sqrt(Volume)
+    elif INTS_ALGO == 'xn':
+        with aopw_xn.prepare(mol) as opt:
+            return aopw_xn.nuc(mol, pw_k, opt=opt).T / np.sqrt(Volume)
 #============================================================
 
 
@@ -281,10 +304,17 @@ def get_vnuc(mol, pw_k, xlim, ylim, zlim, w, cf=None):
 def get_v2e(mol, pw_k, xlim, ylim, zlim, w, types, cf=None):
 
     '''
-    Computes (P_k G_a|G_b G_c)
+    Computes 2-electron integrals of the type:
+      1) bbbb, which gives (G_a G_b|G_c G_d), or
+      2) kbbb, which gives (P_k G_a|G_b G_c)
 
     Return:
-      A list of 2e (P_k G_a|G_b G_c) integrals
+      A dictionary with elements corresponding to a particular integral type, 'bbbb' or 'kbbb'.
+      The dicionary value for all integral types is a list of independent INT2e objects ordered
+      so that the 4-th index runs the fastest, then the 3rd, then the 2nd, and finally the 1st.
+      For the 'bbbb' and 'kbbb' types, the list contains npair*(npair+1)/2 and nk*nmo*npair
+      elements, respectively, where npair=nmo*(nmo+1)/2, nk is the number of k vectors in pw_k, 
+      nmo is the number of AOs (or MOs).
     '''
     
     nao = mol.nao
@@ -294,36 +324,56 @@ def get_v2e(mol, pw_k, xlim, ylim, zlim, w, types, cf=None):
     g2e = {}
     for i, v2e_type in enumerate(types):
         if v2e_type == 'bbbb':
+            # For the bbbb type, the 2e integrals are calculated through PySCF.
             if cf is None:
-                g2e['bbbb'] = aopw_xa.int_2e(mol, pw_k, set(['bbbb']))
-            #^^ Only the independent elements according to PySCF symmetry 's8' are stored
-            #in g2e['bbbb'].
+                nmo = mol.nao
+                #OLD aopw_xa.int_2e(mol, pw_k, set(['bbbb']))
+                mmmm = mol.intor('int2e_sph', aosym="s8")
+                #^^ mmmm is a vector of size npair*(npair+1)/2, where npair=nmo*(nmo+1)/2.
+                #Only the independent elements according to PySCF symmetry 's8' are stored
+                #in mmmm. 
             else:
                 nmo = cf.shape[1]
-                mmmm = ao2mo.kernel(mol, cf, intor='int2e_sph', aosym='s8')
-                g2e['bbbb'] = []
-                for p in range(nmo):
-                    for q in range(p+1):
-                        pq = p*nmo + q
-                        for r in range(nmo):
-                            for s in range(s+1):
-                                rs = r*nmo + s
-                                if pq >= rs:
-                                    g2e['bbbb'].append(INT2e((p, q, r, s), mmmm[p,q,r,s]))
+                mmmm = ao2mo.kernel(mol, cf, intor='int2e_sph')
+                #^^ mmmm is a square matrix of size npair x npair, where npair=nmo*(nmo+1)/2,
+                # which corresponds to PySCF's 's4' symmetry.
+            g2e['bbbb'] = []
+            nu = 0
+            for p in range(nmo):
+                for q in range(p+1):
+                    pq = round(p*(p+1)/2) + q
+                    for r in range(nmo):
+                        for s in range(r+1):
+                            rs = round(r*(r+1)/2) + s
+
+                            if pq >= rs:
+                                if cf is None:
+                                    g2e['bbbb'].append(INT2e((p, q, r, s), mmmm[nu]))
+                                else:
+                                    g2e['bbbb'].append(INT2e((p, q, r, s), mmmm[pq,rs]))
+                                nu += 1
+
         elif v2e_type == 'kbbb':
-            with aopw_xn.prepare(mol) as opt:
-                bkbb = aopw_xn.gpgg(mol, pw_k, opt=opt)          
-                #^^ gpgg returns (G_a P_k|G_b G_c) with shape (nk, nao, nao, nao),
-                # but we want (P_k G_a|G_b G_c).
-            g2e['kbbb'] = []
-            for k in range(nk):
-                for p in range(nao):
-                    for q in range(nao):
-                        for r in range(q+1):
-                            g2e['kbbb'].append(INT2e((nao+k, p, q, r),
-                                                     bkbb[k,p,q,r].conj()/np.sqrt(Volume)))
-            if cf is not None:
-                sortid = aopw_xa.sort_kbbb(g2e['kbbb'], nao)
+            # For the kbbb type, the 2e integrals are calculated through either xa or xn codes.
+            if INTS_ALGO == 'xa':
+                g2e['kbbb'] = aopw_xa.int_2e(mol, pw_k, set(['kbbb']), pw_norm=1/np.sqrt(Volume))
+                #^^ int_2e returns (P_k G_a|G_b G_c) in an unsorted list.
+            elif INTS_ALGO == 'xn':
+                with aopw_xn.prepare(mol) as opt:
+                    bkbb = aopw_xn.gpgg(mol, pw_k, opt=opt)          
+                    #^^ gpgg returns (G_a P_k|G_b G_c) with shape (nk, nao, nao, nao),
+                    # but we want (P_k G_a|G_b G_c) in a list.
+                g2e['kbbb'] = []
+                for k in range(nk):
+                    for p in range(nao):
+                        for q in range(nao):
+                            for r in range(q+1):
+                                g2e['kbbb'].append(INT2e((nao+k, p, q, r),
+                                                         bkbb[k,p,q,r].conj()/np.sqrt(Volume)))
+            sortid = aopw_xa.sort_kbbb(g2e['kbbb'], nao)
+            if cf is None:
+                g2e['kbbb'] = [g2e['kbbb'][i] for i in sortid]
+            else:
                 g2e['kbbb'] = aopw_xa.int2e_ao2mo_kbbb(cf, [g2e['kbbb'][i] for i in sortid],
                                                        len(pw_k))
         else:
@@ -492,6 +542,13 @@ def effective_tpw(d_ortho, e_ortho, cf, mol, sv_thr=-1, verb=0, *, S_cross_ao=No
                  V_cross_ao=None, g2e_kbbb=None, pw_k=None, xlim=None, ylim=None, zlim=None,
                  w=None):
 
+    '''
+    g2e_kbbb:
+      2e integral objects INT2e of the type (P_k G_a|G_b G_c) (involves one PW and three
+      AOs) arranged into a 1D list. c runs the fastest and k runs the slowest. k runs over
+      all PWs, a and b run over all AOs, and 0<=c<=b. It can be obtained by calling get_v2e()
+      with types=['kbbb'].
+    '''
 
     T_mol_ao = mol.intor('int1e_kin_sph')
     V_mol_ao = mol.intor('int1e_nuc_sph')
@@ -560,18 +617,27 @@ def get_effective_tpw(mol, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, sv_thr=
 
 
     #==== Step 3: Perform SVD on the coupling matrix ====#
-    with aopw_xn.prepare(mol) as opt:
-        S_cross_ao = aopw_xn.ovlp(mol, pw_k, opt=opt).T / norm
-        T_cross_ao = aopw_xn.kin(mol, pw_k, opt=opt).T / norm
-        V_cross_ao = aopw_xn.nuc(mol, pw_k, opt=opt).T / norm
-        bkbb = aopw_xn.gpgg(mol, pw_k, opt=opt)
-        
-    g2e_kbbb = []
-    for k in range(nk):
-        for p in range(nao):
-            for q in range(nao):
-                for r in range(q+1):
-                    g2e_kbbb.append(INT2e((nao+k, p, q, r), bkbb[k,p,q,r].conj()/norm))
+    if INTS_ALGO == 'xa':
+        S_cross_ao = aopw_xa.ao_pw_ovlp(mol, pw_k) / norm
+        pw_kin = 0.5 * np.einsum("pi,pi->p", pw_k, pw_k)
+        T_cross_ao = pw_kin[None,:] * S_cross_ao
+        V_cross_ao = aopw_xa.ao_pw_pot(mol, pw_k) / norm
+        g2e_kbbb = aopw_xa.int_2e(mol, pw_k, set(['kbbb']), pw_norm=1/norm)
+        sortid = aopw_xa.sort_kbbb(g2e_kbbb, nao)
+        g2e_kbbb = [g2e_kbbb[i] for i in sortid]
+    elif INTS_ALGO == 'xn':
+        with aopw_xn.prepare(mol) as opt:
+            S_cross_ao = aopw_xn.ovlp(mol, pw_k, opt=opt).T / norm
+            T_cross_ao = aopw_xn.kin(mol, pw_k, opt=opt).T / norm
+            V_cross_ao = aopw_xn.nuc(mol, pw_k, opt=opt).T / norm
+            bkbb = aopw_xn.gpgg(mol, pw_k, opt=opt)
+            
+        g2e_kbbb = []
+        for k in range(nk):
+            for p in range(nao):
+                for q in range(nao):
+                    for r in range(q+1):
+                        g2e_kbbb.append(INT2e((nao+k, p, q, r), bkbb[k,p,q,r].conj()/norm))
 
     sv, d_eff, e_eff = effective_tpw(d_ortho, e_ortho, cf, mol, sv_thr, verb,
                                      S_cross_ao=S_cross_ao, T_cross_ao=T_cross_ao,
@@ -691,6 +757,7 @@ def analyze(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf, e_proj=None, d_or
     Volume = (xlim[1]-xlim[0]+2*w) * (ylim[1]-ylim[0]+2*w) * (zlim[1]-zlim[0]+2*w)
     nao, nmo = cf.shape
     nk = len(kxvec) * len(kyvec) * len(kzvec)
+    print('AO-PW integral algorithm = ', INTS_ALGO)
     print('No. of GTO basis functions = ', nao, flush=True)
     print('No. of MOs = ', nmo, flush=True)
     print('No. of k points (kx,ky,kz) = ', (len(kxvec), len(kyvec), len(kzvec)), flush=True)
@@ -707,18 +774,11 @@ def analyze(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf, e_proj=None, d_or
     #==== Get the necessary operators ====#
     S = get_ovlp(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf=cf)
     P = get_momentum(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf=cf)
-    print('P hermi = %.10e %.10ej' % (np.sum(P[0]).real/P[0].size, (np.sum(P[0]).imag/P[0].size)))
-    print('P hermi = %.10e %.10ej' % (np.sum(P[1]).real/P[0].size, (np.sum(P[1]).imag/P[0].size)))
-    print('P hermi = %.10e %.10ej' % (np.sum(P[2]).real/P[0].size, (np.sum(P[2]).imag/P[0].size)))
     Sx = ovlp_tpw_1d(kxvec, xlim[0], xlim[1], w)
     Sy = ovlp_tpw_1d(kyvec, ylim[0], ylim[1], w)
     Sz = ovlp_tpw_1d(kzvec, zlim[0], zlim[1], w)
     P2 = 2 * get_kin_cart(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=Sx, Sy=Sy, Sz=Sz,
                           cf=cf)
-
-    print('P2 hermi = %.10e %.10ej' % (np.sum(P2[0]).real/P2[0].size, (np.sum(P2[0]).imag/P2[0].size)))
-    print('P2 hermi = %.10e %.10ej' % (np.sum(P2[1]).real/P2[0].size, (np.sum(P2[1]).imag/P2[0].size)))
-    print('P2 hermi = %.10e %.10ej' % (np.sum(P2[2]).real/P2[0].size, (np.sum(P2[2]).imag/P2[0].size)))
     T = get_kin(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=Sx, Sy=Sy, Sz=Sz, cf=cf)
     
     
