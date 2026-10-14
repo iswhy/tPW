@@ -22,6 +22,14 @@ class INT2e:
 
 #============================================================
 def set_algo(a):
+    '''
+    Sets the algorithm type to calculate the cross integrals between the AOs and
+    PWs. Without setting the algorithm type, the default is "xa".
+
+    a:
+      A string specifying the algorithm type. It accepts "xa" or "xn".
+    '''
+    
     assert a.lower() == 'xa' or a.lower() == 'xn', \
         f'set_algo only accepts "xa" or "xn", but "{a}" is given.'
     global INTS_ALGO
@@ -127,9 +135,20 @@ def MO_transform(A_ao, cf):
 #============================================================
 def get_ovlp_cross(mol, pw_k, xlim, ylim, zlim, w):
     '''
-    Compute the Gaussian–plane-wave overlap ``<G_a|P_k>``.
+    Compute the AO-PW overlap ``<G_a|P_k>`` matrix
+
+    mol:
+      PySCF mole object.
+    pw_k:
+      The k vectors arranged into rows (there are three columns with each row
+      corresponding to a particular k vector).
+    xlim, ylim, zlim:
+      Each is a tuple of two elements that defines the volume for the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+    
     Returns:
-        AO overlaps with shape (nao, nk).
+        AO-PW overlaps matrix with shape (nao, npw).
     '''
     
     Volume = (xlim[1]-xlim[0]+2*w) * (ylim[1]-ylim[0]+2*w) * (zlim[1]-zlim[0]+2*w)
@@ -153,6 +172,26 @@ def get_ovlp_tpw(kxvec, kyvec, kzvec, xlim, ylim, zlim, w):
 
 #============================================================
 def get_ovlp(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf=None):
+    '''
+    Computes the overlap matrix among AOs+tPWs.
+
+    mol:
+      PySCF mole object.
+    kxvec, kyvec, kzvec:
+      The x, y, and z components of the k vectors of the tPWs.
+    xlim, ylim, zlim:
+      Each is a tuple of two elements that defines the volume for the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+    cf:
+      MO coefficients, if provided, the AO parts of the matrix are transformed into
+      its MO representation.
+
+    Return:
+      The overlap matrix among AOs+tPWs. The first nao rows (columns) corresponds to
+      the AOs, and the remaining rows (columns) to the tPWs.
+    '''
+    
     nao = mol.nao
     pw_k = assemble_ks(kxvec, kyvec, kzvec)
     nb = nao + len(pw_k)
@@ -182,6 +221,23 @@ def get_kin_cross_cart(mol, pw_k, xlim, ylim, zlim, w):
 
 #============================================================
 def get_kin_cross(mol, pw_k, xlim, ylim, zlim, w):
+    '''
+    Compute the AO-PW kinetic energy ``<G_a|T|P_k>`` matrix
+
+    mol:
+      PySCF mole object.
+    pw_k:
+      The k vectors arranged into rows (there are three columns with each row
+      corresponding to a particular k vector).
+    xlim, ylim, zlim:
+      Each is a tuple of two elements that defines the volume for the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+    
+    Returns:
+        AO-PW kinetic energy matrix with shape (nao, npw).
+    '''
+    
     Volume = (xlim[1]-xlim[0]+2*w) * (ylim[1]-ylim[0]+2*w) * (zlim[1]-zlim[0]+2*w)
     if INTS_ALGO == 'xa':
         pw_kin = 0.5 * np.einsum("pi,pi->p", pw_k, pw_k)
@@ -226,6 +282,33 @@ def get_kin_tpw(kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None, Sz=N
 
 #============================================================
 def get_kin_cart(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None, Sz=None, cf=None):
+    '''
+    Computes the Cartesian components of the kinetic energy matrix among AOs+tPWs.
+    Summing these three component matrices yields an identical matrix as that
+    returned by get_kin.
+
+    mol:
+      PySCF mole object.
+    kxvec, kyvec, kzvec:
+      The x, y, and z components of the k vectors of the tPWs.
+    xlim, ylim, zlim:
+      Each is a tuple of two elements that defines the volume for the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+    cf:
+      MO coefficients, if provided, the AO parts of the matrix are transformed into
+      its MO representation.
+    Sx, Sy, Sz:
+      The overlap matrices among the x, y, and z parts of the tPWs, respectively.
+      They can be calculated using ovlp_tpw_1d.
+
+    Return:
+      The kinetic energy matrices among AOs+tPWs. The shape is (3,nao+npw,nao+npw),
+      with the first dimension associated to the Cartesian components of the kinetic
+      energy operator. For the 2nd and 3rd dimensions, the first nao rows (columns)
+      corresponds to the AOs, and the remaining rows (columns) to the tPWs.
+    '''
+
     nao = mol.nao
     pw_k = assemble_ks(kxvec, kyvec, kzvec)
     nb = nao + len(pw_k)
@@ -249,6 +332,26 @@ def get_kin_cart(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None
 
 #============================================================
 def get_kin(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None, Sz=None, cf=None):
+    '''
+    Computes the kinetic energy matrix among AOs+tPWs.
+
+    mol:
+      PySCF mole object.
+    kxvec, kyvec, kzvec:
+      The x, y, and z components of the k vectors of the tPWs.
+    xlim, ylim, zlim:
+      Each is a tuple of two elements that defines the volume for the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+    cf:
+      MO coefficients, if provided, the AO parts of the matrix are transformed into
+      its MO representation.
+
+    Return:
+      The kinetic energy matrix among AOs+tPWs. The first nao rows (columns)
+      corresponds to the AOs, and the remaining rows (columns) to the tPWs.
+    '''
+    
     nao = mol.nao
     pw_k = assemble_ks(kxvec, kyvec, kzvec)
     nb = nao + len(pw_k)
@@ -270,6 +373,23 @@ def get_kin(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None, Sz=
 
 #============================================================
 def get_vnuc_cross(mol, pw_k, xlim, ylim, zlim, w):
+    '''
+    Compute the AO-PW nuclear attraction ``<G_a|V_{nuc}|P_k>`` matrix
+
+    mol:
+      PySCF mole object.
+    pw_k:
+      The k vectors arranged into rows (there are three columns with each row
+      corresponding to a particular k vector).
+    xlim, ylim, zlim:
+      Each is a tuple of two elements that defines the volume for the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+    
+    Returns:
+        AO-PW nuclear attraction matrix with shape (nao, npw).
+    '''
+    
     Volume = (xlim[1]-xlim[0]+2*w) * (ylim[1]-ylim[0]+2*w) * (zlim[1]-zlim[0]+2*w)
     if INTS_ALGO == 'xa':
         return aopw_xa.ao_pw_pot(mol, pw_k) / np.sqrt(Volume)
@@ -281,6 +401,26 @@ def get_vnuc_cross(mol, pw_k, xlim, ylim, zlim, w):
 
 #============================================================
 def get_vnuc(mol, pw_k, xlim, ylim, zlim, w, cf=None):
+    '''
+    Computes the nuclear attraction matrix among AOs+tPWs.
+
+    mol:
+      PySCF mole object.
+    kxvec, kyvec, kzvec:
+      The x, y, and z components of the k vectors of the tPWs.
+    xlim, ylim, zlim:
+      Each is a tuple of two elements that defines the volume for the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+    cf:
+      MO coefficients, if provided, the AO parts of the matrix are transformed into
+      its MO representation.
+
+    Return:
+      The nuclear attraction matrix among AOs+tPWs. The first nao rows (columns)
+      corresponds to the AOs, and the remaining rows (columns) to the tPWs.
+    '''
+
     nao = mol.nao
     nk = len(pw_k)
     nb = nao + nk
@@ -307,6 +447,18 @@ def get_v2e(mol, pw_k, xlim, ylim, zlim, w, types, cf=None):
     Computes 2-electron integrals of the type:
       1) bbbb, which gives (G_a G_b|G_c G_d), or
       2) kbbb, which gives (P_k G_a|G_b G_c)
+    where P_k is a tPW and G_a is a GTO.
+
+    pw_k:
+      The k vectors arranged into rows (there are three columns with each row
+      corresponding to a particular k vector).
+    xlim, ylim, zlim:
+      Each is a tuple of two elements that defines the volume for the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+    cf:
+      MO coefficients, if provided, the AO parts of the integrals are transformed into
+      its MO representation.
 
     Return:
       A dictionary with elements corresponding to a particular integral type, 'bbbb' or 'kbbb'.
@@ -386,6 +538,23 @@ def get_v2e(mol, pw_k, xlim, ylim, zlim, w, types, cf=None):
 
 #============================================================
 def get_momentum_cross(mol, pw_k, xlim, ylim, zlim, w):
+    '''
+    Compute the AO-PW overlap ``<G_a|P_i|P_k>`` matrix for i=x,y,z.
+
+    mol:
+      PySCF mole object.
+    pw_k:
+      The k vectors arranged into rows (there are three columns with each row
+      corresponding to a particular k vector).
+    xlim, ylim, zlim:
+      Each is a tuple of two elements that defines the volume for the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+    
+    Returns:
+        AO-PW momentum matrices with shape (3,nao,npw).
+    '''
+
     S_cross = get_ovlp_cross(mol, pw_k, xlim, ylim, zlim, w)
     nao = mol.nao
     return np.array( [np.outer(np.ones(nao), pw_k[:,i]) * S_cross for i in range(3)] )
@@ -410,6 +579,28 @@ def get_momentum_tpw(kxvec, kyvec, kzvec, xlim, ylim, zlim, w, S_tpw=None):
 
 #============================================================
 def get_momentum(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, S_tpw=None, cf=None):
+    '''
+    Computes the momentum matrix among AOs+tPWs.
+
+    mol:
+      PySCF mole object.
+    kxvec, kyvec, kzvec:
+      The x, y, and z components of the k vectors of the tPWs.
+    xlim, ylim, zlim:
+      Each is a tuple of two elements that defines the volume for the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+    cf:
+      MO coefficients, if provided, the AO parts of the matrix are transformed into
+      its MO representation.
+
+    Return:
+      The momentum matrices among AOs+tPWs. The shape is (3,nao+npw,nao+npw), with
+      the first dimension associated to the Cartesian components of the momentum
+      operator. For the 2nd and 3rd dimensions, the first nao rows (columns)
+      corresponds to the AOs, and the remaining rows (columns) to the tPWs.
+    '''
+    
     nao = mol.nao
     pw_k = assemble_ks(kxvec, kyvec, kzvec)
     nb = nao + len(pw_k)
