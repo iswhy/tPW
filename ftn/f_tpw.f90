@@ -91,7 +91,7 @@ contains
 
   !=======================================================
   subroutine tpw_orthogonalize(ortho, nk, nmo, e_proj, s_tpw, max_order, tol, ocheck, &
-       northo, d_ortho, e_ortho)
+       northo, d_ortho, e_ortho) bind(c, name='ftpw_orthogonalize')
 
     use mod_numc, only : czero, cone
     use mod_tools, only : tools_zgemm, tools_zheev
@@ -144,7 +144,6 @@ contains
     !==== Calculate e_ortho = e_proj X = e_proj d_ortho ====!
     call tools_zgemm('n', 'n', nmo, nk, northo, cone, e_proj, d_ortho(:,:northo), czero, &
          e_ortho)
-
     
   end subroutine tpw_orthogonalize
   !=======================================================
