@@ -7,9 +7,9 @@ from pyscf import scf, gto, ao2mo
 from pyscf.tools import fcidump
 
 
-#============================================================
+#=============================================================
 INTS_ALGO = 'xa'
-#============================================================
+#=============================================================
 
 
 #=============================================================
@@ -41,13 +41,20 @@ def set_algo(a):
 #============================================================
 def ovlp_tpw_1d(kvec, xl, xr, w):
     '''
-    Calculates the overlap integrals between 1D tapered PWs.
+    Calculates the overlap integral matrix among 1D tapered PWs.
 
-    Return value:
-    A 3D array Sreg, where Sreg[0], Sreg[1], and Sreg[2] contain overlap
-    matrices in the left, center, and right regions, respectively. Sum these
-    three matrices to get the total overlap matrix integrated over the entire
-    axis.
+    kvec:
+      k points of each tPW.
+    xl and xr:
+      The positions of the left and right walls of the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+
+    Returns:
+      A 3D array Sreg, where Sreg[0], Sreg[1], and Sreg[2] contain overlap
+      matrices in the left, center, and right regions, respectively. Sum these
+      three matrices to get the total overlap matrix integrated over the entire
+      axis.
     '''
     
     norm = xr - xl + 2*w
@@ -73,6 +80,23 @@ def ovlp_tpw_1d(kvec, xl, xr, w):
 
 #============================================================
 def kin_tpw_1d(kvec, w, *, Sreg=None, xl=None, xr=None):
+    '''
+    Calculates the kinetic energy matrix among 1D tapered PWs.
+
+    kvec:
+      k points of each tPW.
+    xl and xr:
+      The positions of the left and right walls of the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+    Sreg:
+      A 3D array representing the overlap matrices among 1D tPWs in the left, middle
+      (pure PW), and right intervals, respectively. It can be obtained by calling
+      ovlp_tpw_1d. If not given, xl and xr must be given.
+
+    Returns:
+      The kinetic energy matrix in 1D tPW representation.
+    '''
 
     if Sreg is None:
         if all([var is not None for var in (xl, xr, w)]):
@@ -91,6 +115,11 @@ def kin_tpw_1d(kvec, w, *, Sreg=None, xl=None, xr=None):
 
 #============================================================
 def assemble_ks(kxvec, kyvec, kzvec, verb=0):
+    '''
+    Assembles a 3D k vector array from three 1D k vector arrays that corresponds to
+    the x, y, and z components.
+    '''
+    
     if verb >= 1:
         print('Momentum intervals (kx, ky, kz) = %.6f, %.6f, %.6f'%
               (kxvec[1]-kxvec[0] if Nkx > 1 else 0.0,
@@ -109,9 +138,8 @@ def assemble_ks(kxvec, kyvec, kzvec, verb=0):
 
 #============================================================
 def MO_transform(A_ao, cf):
-
     '''
-    Transforms the full AO-tPW matrix into a full MO-tPW matrix using a set of MOs.
+    Transforms a full AO+tPW matrix into a full MO+tPW matrix using a set of MOs.
     '''
     
     nao, nmo = cf.shape
@@ -148,7 +176,7 @@ def get_ovlp_cross(mol, pw_k, xlim, ylim, zlim, w):
       The 1/e width of the exponential tails of the tPWs.
     
     Returns:
-        AO-PW overlaps matrix with shape (nao, npw).
+      AO-PW overlaps matrix with shape (nao, npw).
     '''
     
     Volume = (xlim[1]-xlim[0]+2*w) * (ylim[1]-ylim[0]+2*w) * (zlim[1]-zlim[0]+2*w)
@@ -213,6 +241,27 @@ def get_ovlp(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf=None):
 
 #============================================================
 def get_kin_cross_cart(mol, pw_k, xlim, ylim, zlim, w):
+    '''
+    Computes the Cartesian components of the kinetic energy matrix between AOs and
+    PWs, i.e. <G_a|T_i|P_k> where i=x,y,z. Summing these three component matrices
+    yields an identical matrix as that returned by get_kin_cross.
+
+    mol:
+      PySCF mole object.
+    pw_k:
+      The k vectors arranged into rows (there are three columns with each row
+      corresponding to a particular k vector).
+    xlim, ylim, zlim:
+      Each is a tuple of two elements that defines the volume for the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+
+    Returns:
+      The kinetic energy matrices between AOs and PWs. The shape is (3,nao,npw), with
+      the first dimension associated to the Cartesian components of the kinetic
+      energy operator.
+    '''
+    
     S_cross = get_ovlp_cross(mol, pw_k, xlim, ylim, zlim, w)
     nao = mol.nao
     return np.array( [np.outer(np.ones(nao), pw_k[:,i]**2/2) * S_cross for i in range(3)] )
@@ -250,7 +299,29 @@ def get_kin_cross(mol, pw_k, xlim, ylim, zlim, w):
 
 #============================================================
 def get_kin_tpw_cart(kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None, Sz=None):
+    '''
+    Computes the Cartesian components of the kinetic energy matrix among tPWs, i.e.
+    <P_k|T_i|P_l> where i=x,y,z. Summing these three component matrices
+    yields an identical matrix as that returned by get_kin_tpw.
 
+    mol:
+      PySCF mole object.
+    kxvec, kyvec, kzvec:
+      The x, y, and z components of the k vectors of the tPWs.
+    xlim, ylim, zlim:
+      Each is a tuple of two elements that defines the volume for the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+    Sx, Sy, Sz:
+      The overlap matrices among the x, y, and z parts of the tPWs, respectively.
+      They can be calculated using ovlp_tpw_1d.
+
+    Returns:
+      The kinetic energy matrices among tPWs. The shape is (3,npw,npw), with
+      the first dimension associated to the Cartesian components of the kinetic
+      energy operator.
+    '''
+    
     if Sx is None:
         Sx = ovlp_tpw_1d(kxvec, xlim[0], xlim[1], w)
     Tx_tpw = kin_tpw_1d(kxvec, w, Sreg=Sx)
@@ -275,6 +346,23 @@ def get_kin_tpw_cart(kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None,
 
 #============================================================
 def get_kin_tpw(kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None, Sz=None):
+    '''
+    Computes the Cartesian components of the kinetic energy matrix among tPWs, i.e.
+    <P_k|T|P_l>.
+
+    kxvec, kyvec, kzvec:
+      The x, y, and z components of the k vectors of the tPWs.
+    xlim, ylim, zlim:
+      Each is a tuple of two elements that defines the volume for the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+    Sx, Sy, Sz:
+      The overlap matrices among the x, y, and z parts of the tPWs, respectively.
+      They can be calculated using ovlp_tpw_1d.
+
+    Returns:
+      The kinetic energy matrix among tPWs.
+    '''
 
     return np.sum(get_kin_tpw_cart(kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx, Sy, Sz), axis=0)
 #============================================================
@@ -459,6 +547,9 @@ def get_v2e(mol, pw_k, xlim, ylim, zlim, w, types, cf=None):
     cf:
       MO coefficients, if provided, the AO parts of the integrals are transformed into
       its MO representation.
+    types:
+      A 1D array-like object with elements 'bbbb' or 'kbbb'. It specifies which integral types
+      are requested.
 
     Return:
       A dictionary with elements corresponding to a particular integral type, 'bbbb' or 'kbbb'.
@@ -472,6 +563,7 @@ def get_v2e(mol, pw_k, xlim, ylim, zlim, w, types, cf=None):
     nao = mol.nao
     nk = len(pw_k)
     Volume = (xlim[1]-xlim[0]+2*w) * (ylim[1]-ylim[0]+2*w) * (zlim[1]-zlim[0]+2*w)
+    types = list(set(types))
     
     g2e = {}
     for i, v2e_type in enumerate(types):
@@ -621,6 +713,35 @@ def get_momentum(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, S_tpw=None, cf=N
 
 
 #============================================================
+def get_dipole_cross(mol, pw_k, xlim, ylim, zlim, w):
+    '''
+    Compute the AO-PW overlap ``<G_a|d|P_k>`` matrix for d=x,y,z.
+
+    mol:
+      PySCF mole object.
+    pw_k:
+      The k vectors arranged into rows (there are three columns with each row
+      corresponding to a particular k vector).
+    xlim, ylim, zlim:
+      Each is a tuple of two elements that defines the volume for the pure PW region.
+    w:
+      The 1/e width of the exponential tails of the tPWs.
+    
+    Returns:
+        AO-PW dipole matrices with shape (3,nao,npw).
+    '''
+
+    Volume = (xlim[1]-xlim[0]+2*w) * (ylim[1]-ylim[0]+2*w) * (zlim[1]-zlim[0]+2*w)
+    if INTS_ALGO == 'xa':
+        return aopw_xa.ao_pw_dipole(mol, pw_k) / np.sqrt(Volume)
+    elif INTS_ALGO == 'xn':
+        with aopw_xn.prepare(mol) as opt:
+            #vv aopw_xn.dipole returns (nk,3,nao) while we want (3,nao,nk).
+            return aopw_xn.dipole(mol, pw_k, opt=opt).transpose(1,2,0) / np.sqrt(Volume)
+#============================================================
+
+
+#============================================================
 def projected_tpw(mol, pw_k, xlim, ylim, zlim, w, cf, verb=0):
 
     if verb >= 1:
@@ -629,6 +750,41 @@ def projected_tpw(mol, pw_k, xlim, ylim, zlim, w, cf, verb=0):
     S_cross_ao = get_ovlp_cross(mol, pw_k, xlim, ylim, zlim, w)
 
     return -1 * np.einsum('ij, ik -> jk', cf, S_cross_ao, optimize=True)
+#============================================================
+
+
+#============================================================
+def get_symm_X(S, max_order=10, tol=1E-10, enforce=True):
+    '''
+    Calculates the transformation matrix in the symmetric orthogonalization method using
+    matrix iteration.
+    '''
+    
+    norm = np.sqrt(np.diag(S))
+    S_norm = np.diag(1/norm) @ S @ np.diag(1/norm)
+    E = S_norm - np.eye(S_norm.shape[0])
+    
+    X = np.eye(S_norm.shape[0], dtype=complex)
+    for i in range(1,max_order+1):
+        correction = E.copy()
+        if i > 1:
+            correction = correction @ E
+        cc = (-1)**i * comb(2*i, i) / 4**i
+        X += cc * correction
+        error_series = np.linalg.norm(correction)
+        error_ortho = np.linalg.norm(X.conj().T @ S_norm @ X - np.eye(S_norm.shape[0]))
+        isconv = error_series < tol and error_ortho < tol
+        if isconv:
+            break
+
+    conv_msg = 'Matrix iteration has reached the specified limit but convergence ' + \
+            'has not been attained.'
+    if enforce:
+        assert isconv, 'ERROR: ' + conv_msg
+    else:
+        if not isconv: print('WARNING: ' + conv_msg)
+        
+    return X
 #============================================================
 
 
@@ -642,27 +798,31 @@ def orthogonalized_tpw(ortho, e_proj, canon_thr=1E-4, verb=0, *, S_tpw=None, kxv
         
     if S_tpw is None:
         if all([var is not None for var in (kxvec, kyvec, kzvec, xlim, ylim, zlim, w)]):
+            time0 = time.time()
             S_tpw = get_ovlp_tpw(kxvec, kyvec, kzvec, xlim, ylim, zlim, w)
+            print('S_tpw elapsed time = %.3f s' % (time.time() - time0), flush=True)
         else:
             raise ValueError('If S_tpw is not given or is None, all of kxvec, kyvec, kzvec, ' +
                              'xlim, ylim, zlim, and w must be given.')
 
     S_cross_mo = -e_proj
     S_proj = S_tpw - S_cross_mo.conj().T @ S_cross_mo    # S_proj is the overlap matrix among projected TPWs.
-    s, U = scipy.linalg.eigh(S_proj)
     
     #vv These orthogonalization methods also orthonormalize the output vectors regardless
     # of the normalization of the input vectors.
     if ortho == 'canon':
+        s, U = scipy.linalg.eigh(S_proj)
         X = U[:,s>=canon_thr] @ np.diag([1/np.sqrt(s0) for s0 in s[s>=canon_thr]])
     elif ortho == 'symm':
-        X = U @ np.diag([1/np.sqrt(s0) for s0 in s]) @ U.conj().T
+        X = get_symm_X(S_proj)
+        #X = U @ np.diag([1/np.sqrt(s0) for s0 in s]) @ U.conj().T
     else:
         raise ValueError(f'Unavailable option specified for ortho, ortho = {ortho}.')
     #print('ovl_kp = ', X.conj().T @ S_proj @ X)
 
     if verb >= 1:
-        print('No. of discarded projected plane waves = ', S_proj.shape[1] - X.shape[1])
+        print('No. of discarded projected plane waves = ', S_proj.shape[1] - X.shape[1],
+              flush=True)
     
     return X, np.einsum('ij, jk -> ik', e_proj, X, optimize=True)
 #============================================================
@@ -670,8 +830,16 @@ def orthogonalized_tpw(ortho, e_proj, canon_thr=1E-4, verb=0, *, S_tpw=None, kxv
 
 #============================================================
 def get_coupling(cf, S_cross_ao, T_mol_ao, T_cross_ao, V_mol_ao, V_cross_ao, g2e_mmmm,
-                 g2e_kbbb, X):
+                 g2e_kbbb, X, efield=None, D_mol_ao=None, D_cross_ao=None):
     '''
+    efield:
+      The three Cartesian components of electric field vector in a.u.
+    D_mol_ao:
+      Dipole matrix components in AO basis. Only used/computed if efield is given. The
+      shape is (3,nao,nao).
+    D_cross_ao:
+      Dipole matrix components between AO and PW, <G_a|d|P_k> where d=x,y,z. Only used/
+      computed if efield is given. The shape is (3,nao,npw).
     g2e_kbbb:
       2e integral objects INT2e of the type (P_k G_a|G_b G_c) (involves one PW and three
       AOs) arranged into a 1D list. c runs the fastest and k runs the slowest. k runs over
@@ -723,17 +891,27 @@ def get_coupling(cf, S_cross_ao, T_mol_ao, T_cross_ao, V_mol_ao, V_cross_ao, g2e
     #==== Calculate the 1e and 2e parts of coupling matrix ====#
     h1e_cross_kp = (h1e_cross_mo - h1e_mol_mo @ S_cross_mo) @ X
     g2e_mmm_kp = (g2e_mmmk - g2e_mmmm @ S_cross_mo) @ X
-    
-    return np.vstack((h1e_cross_kp, g2e_mmm_kp))
+
+    if efield is not None:
+        dip_mol_mo = np.einsum('d, ij, dik, kl -> jl', efield, cf, D_mol_ao, cf, optimize=True)
+        dip_cross_mo = np.einsum('d, ij, dik -> jk', efield, cf, D_cross_ao, optimize=True)
+        dip_cross_kp = (dip_cross_mo - dip_mol_mo @ S_cross_mo) @ X
+        return np.vstack((h1e_cross_kp, g2e_mmm_kp, dip_cross_kp))
+    else:
+        return np.vstack((h1e_cross_kp, g2e_mmm_kp))
 #============================================================
 
 
 #============================================================
 def effective_tpw(d_ortho, e_ortho, cf, mol, sv_thr=-1, verb=0, *, S_cross_ao=None, T_cross_ao=None, 
-                 V_cross_ao=None, g2e_kbbb=None, pw_k=None, xlim=None, ylim=None, zlim=None,
-                 w=None):
+                  V_cross_ao=None, g2e_kbbb=None, pw_k=None, xlim=None, ylim=None, 
+                  zlim=None, w=None, efield=None, D_cross_ao=None):
 
     '''
+    efield:
+      The three Cartesian components of electric field vector in a.u.
+    D_cross_ao:
+      Only used/computed if efield is given.
     g2e_kbbb:
       2e integral objects INT2e of the type (P_k G_a|G_b G_c) (involves one PW and three
       AOs) arranged into a 1D list. c runs the fastest and k runs the slowest. k runs over
@@ -747,7 +925,10 @@ def effective_tpw(d_ortho, e_ortho, cf, mol, sv_thr=-1, verb=0, *, S_cross_ao=No
     #^^ g2e_mmmm is a matrix, 's2ij' means the first two indices form independent pairs,
     # nao*(nao+1)/2. The last two indices  cover all pairs, nao*nao.
     #debug print('Shape of (mm|mm) = ', g2e_mmmm.shape)
-
+    if efield is None:
+        D_mol_ao = None
+    else:
+        D_mol_ao = mol.intor('int1e_r_sph')
     
     if verb >= 1:
         thistime = time.time()
@@ -763,6 +944,8 @@ def effective_tpw(d_ortho, e_ortho, cf, mol, sv_thr=-1, verb=0, *, S_cross_ao=No
     S_cross_ao = _check_existence(S_cross_ao, get_ovlp_cross, 0, mol, pw_k, xlim, ylim, zlim, w)
     T_cross_ao = _check_existence(T_cross_ao, get_kin_cross, 1, mol, pw_k, xlim, ylim, zlim, w)
     V_cross_ao = _check_existence(V_cross_ao, get_vnuc_cross, 2, mol, pw_k, xlim, ylim, zlim, w)
+    if efield is not None:
+        D_cross_ao = _check_existence(D_cross_ao, get_dipole_cross, 3, mol, pw_k, xlim, ylim, zlim, w)
     if verb >= 1:
         print(f'Time spent for computing 1e integrals = {time.time()-thistime:.3f}')
         thistime = time.time()
@@ -775,7 +958,7 @@ def effective_tpw(d_ortho, e_ortho, cf, mol, sv_thr=-1, verb=0, *, S_cross_ao=No
 
     X = d_ortho
     G = get_coupling(cf, S_cross_ao, T_mol_ao, T_cross_ao, V_mol_ao, V_cross_ao, g2e_mmmm,
-                     g2e_kbbb, X)
+                     g2e_kbbb, X, efield, D_mol_ao, D_cross_ao)
     #G = np.random.rand(G.shape[0],G.shape[1])-0.5 + 1j*(np.random.rand(G.shape[0],G.shape[1])-0.5)
     #use the line above and the effective PW becomes complex.
     U, sv, Vt = scipy.linalg.svd(G, full_matrices=False)
@@ -1191,57 +1374,3 @@ def print_plane(fname, kp_coeff, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_
 
     return
 ##====================================================#
-
-
-
-
-#
-#kp_coeff = np.zeros((nmo+Nk,hm_trans.shape[1]), dtype=complex)
-#kp_coeff[:nmo,:] = -np.einsum('ij, jk, kl -> il', S_mk[:nmo,nmo:], X, hm_trans)
-#kp_coeff[nmo:,:] = np.einsum('ij, jk -> ik', X, hm_trans)
-#print('norms = ', np.linalg.norm(kp_coeff[:nmo,5]), np.linalg.norm(kp_coeff[nmo:,5]), flush=True)
-#
-#fout = 'epw-kp_line.txt'
-#print_line(fout, kp_coeff[:,5], mol, hf.mo_coeff, pw_k, xlim, ylim, zlim, w, 'z',
-#           np.linspace(-1.3*(wall+w), 1.3*(wall+w), 4000), -1.0, 4.0)
-#
-#fout = 'epw-kp_plane.txt'
-#print_plane(fout, kp_coeff[:,5], mol, hf.mo_coeff, pw_k, xlim, ylim, zlim, w, 'zy',
-#            np.linspace(-330, 330, 200), np.linspace(-330, 330, 200), 
-#            0.0)
-
-
-
-
-
-#
-#
-#
-#
-#        
-#        
-#
-#kp_coeff = np.zeros((nmo+Nk,X.shape[1]), dtype=complex)
-#kp_coeff[:nmo,:] = 0*-np.einsum('ij, jk -> ik', S_mk[:nmo,nmo:], X)
-#kp_coeff[nmo:,:] = X
-#print('norms = ', np.linalg.norm(kp_coeff[:nmo,10]), np.linalg.norm(kp_coeff[nmo:,10]))
-#
-#fout = 'epw-kp.txt'
-#print_line(fout, kp_coeff[:,5], mol, hf.mo_coeff, pw_k, xlim, ylim, zlim, w, 'z',
-#           np.linspace(-1.3*(wall+w), 1.3*(wall+w), 4000), 0.0, 0.0)
-#
-#
-
-
-
-
-#OLD    #==== FCIDUMP test to see how indices in (aa|aa) integrals change ====#
-#OLD    print_fcidump = True
-#OLD    if print_fcidump:
-#OLD        h1e_test = np.random.rand(mol.nao, mol.nao)
-#OLD        g2e_test = mol.intor('int2e_sph', aosym="s1")
-#OLD        fcidump.from_integrals('dosvd.fcidump', h1e_test, g2e_test, hf.mo_coeff.shape[1], mol.nelectron, ms=0,
-#OLD                               tol=-1, float_format='%.15e')
-
-            
-    
