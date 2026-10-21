@@ -1,4 +1,4 @@
-module mod_tpw
+module mod_ftools
 
   use, intrinsic :: iso_c_binding
   implicit none
@@ -71,7 +71,7 @@ contains
   subroutine tools_zheev(n, a, w)
     !DESCRIPTION:
     ! A wrapper to LAPACK's dsyev routine.
-    use mod_numc, only : czero
+    use mod_fnumc, only : czero
     implicit none
     integer(c_int), intent(in) :: n                 ! [input] order of matrix a 
     complex(c_double_complex), intent(inout) :: a(n,n)   ! [in/output] On input, the matrix to be diagonalized. On output, the eigenvectors arranged in columns.
@@ -105,7 +105,7 @@ contains
   !=======================================================
   subroutine tools_mat_polnom(n, order, E, c, X)
     ! Calculates the polynomials of a matrix using Horner's scheme.
-    use mod_numc, only : czero, cone
+    use mod_fnumc, only : czero, cone
     implicit none
     integer(c_int), intent(in) :: n, order
     complex(c_double_complex), intent(in)  :: E(n,n)
@@ -150,20 +150,20 @@ contains
     ! The series terminates whenever one of these conditions is met first:
     !   1) The frobenius norm of c_n E^n is less than tol,
     !   2) n is equal to max_order.
-    use mod_numc, only : czero, cone
+    use mod_fnumc, only : czero, cone
     implicit none
     integer(c_int), intent(in) :: n
     integer(c_int), intent(in) :: max_order
     real(c_double), intent(in) :: tol
     complex(c_double_complex), intent(in) :: E(n,n)
-    complex(c_double_complex), intent(in) :: c(0:max_order)
+    real(c_double), intent(in) :: c(0:max_order)
     complex(c_double_complex), intent(out) :: X(n,n)
     integer(c_int), intent(out) :: used_order
     logical(c_bool), intent(out) :: isconv
 
     complex(c_double_complex), allocatable, target :: P(:,:), Pnext(:,:)
-    complex(c_double_complex), pointer :: cur(:,:), nxt(:,:), tmp(:,:)
-    real(c_double) :: err_series
+    complex(c_double_complex), pointer :: cur(:,:), nxt(:,:), tmp(:,:), nxt1(:)
+    real(c_double) :: err_series, err_series2
     real(c_double), external :: dznrm2
     integer(c_int) :: i, k
 
@@ -181,10 +181,16 @@ contains
     ! First power: E^1
     cur = E
     used_order = 0
+    write(*, '("check sum E = ", es18.10)') sum(abs(E))
+    write(*, '("check sum cur = ", es18.10)') sum(abs(cur(1:n,1:n)))
 
     do k = 1, max_order
        ! Frobenius norm of the current term c(k)*E^k
-       err_series = abs(c(k)) * dznrm2(n*n, cur(1,1), 1)
+       !err_series = abs(c(k)) * dznrm2(n*n, cur(1,1), 1)
+       err_series = abs(c(k)) * sqrt(sum(conjg(cur)*cur))
+       write(*, '("f ", i4, x, es15.8, x, es15.8)') &
+            k, c(k), err_series  !, dznrm2(n*n, cur(1,1), 1)
+       call flush()
        if (err_series < tol) exit
 
        ! Accumulate c(k) * E^k into X
@@ -194,11 +200,18 @@ contains
        if (k == max_order) exit
 
        ! Calculate E^(k+1) = E^k * E
-       call tools_zgemm('n', 'n', n, n, n, cone, cur, E, czero, nxt)
+       !call tools_zgemm('n', 'n', n, n, n, cone, cur, E, czero, nxt)
+       do i = 1, n
+          nxt1 => Pnext(:,i)
+          call tools_zgemm('n', 'n', n, n, 1, cone, cur, E(1,i), czero, nxt1)
+          write(*, '("i = ", i7)') i
+          call flush()
+       end do
 
        ! Swap working buffers without copying matrix elements
        tmp => cur
-       cur => nxt
+       !cur => nxt
+       cur => Pnext
        nxt => tmp
     end do
 
@@ -212,12 +225,12 @@ contains
   !=======================================================
   subroutine tools_check_ortho(n, m, A, S, tol, is_ortho, max_err)
 
-    use mod_numc, only : czero, cone
+    use mod_fnumc, only : czero, cone
     implicit none
     integer(c_int), intent(in) :: n, m
     complex(c_double_complex), intent(in) :: A(n,m), S(n,n)
     real(c_double), intent(in) :: tol
-    logical, intent(out) :: is_ortho
+    logical(c_bool), intent(out) :: is_ortho
     real(c_double), intent(out) :: max_err
 
     complex(c_double_complex), allocatable :: SA(:,:), G(:,:)
@@ -259,13 +272,13 @@ contains
   subroutine tools_binom(max_order, cf)
     implicit none
     integer(c_int), intent(in) :: max_order
-    real(c_double), intent(in) :: cf(0:max_order)
+    real(c_double), intent(out) :: cf(0:max_order)
 
     integer(c_int) :: i
 
     cf(0) = 1.0d0
     do i = 1, max_order
-       cf(i) = -(2*i-1) / (2*i) * cf(i-1)
+       cf(i) = -(2*i-1.0d0) / (2*i) * cf(i-1)
     end do
     
   end subroutine tools_binom
@@ -273,4 +286,5 @@ contains
 
 
   
-end module mod_tpw
+end module mod_ftools
+

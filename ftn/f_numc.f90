@@ -1,5 +1,5 @@
 
-module mod_numc
+module mod_fnumc
 
   use, intrinsic :: iso_c_binding
   implicit none
@@ -9,4 +9,5 @@ module mod_numc
   complex(c_double_complex), parameter :: cone = cmplx(1.0d0, 0.0d0, c_double_complex)
   complex(c_double_complex), parameter :: imnum = cmplx(0.0d0, 1.0d0, c_double_complex)
 
-end module mod_numc
+end module mod_fnumc
+

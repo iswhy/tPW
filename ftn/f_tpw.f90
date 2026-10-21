@@ -1,4 +1,4 @@
-module mod_tpw
+module mod_ftpw
 
   use, intrinsic :: iso_c_binding
   implicit none
@@ -14,8 +14,8 @@ contains
     ! tol:
     !   Tolerance for terminating the approximation series of X and also for checking the orthogonality
     !   when ocheck=.true.
-    use mod_numc, only : czero
-    use mod_tools, only : tools_binom, tools_mat_series, tools_check_ortho
+    use mod_fnumc, only : czero
+    use mod_ftools, only : tools_binom, tools_mat_series, tools_check_ortho
     implicit none
     integer(c_int), intent(in) :: n
     complex(c_double_complex), intent(inout) :: s_no(n,n)   
@@ -42,7 +42,7 @@ contains
     do j = 1, n
        do i = 1, j
           if (i /= j) then
-             s_no(i,j) = s_no / norm(i) / norm(j)
+             s_no(i,j) = s_no(i,j) / norm(i) / norm(j)
              s_no(j,i) = conjg(s_no(i,j))
           else
              if (ocheck) s_diag(i) = s_no(i,i) / norm(i)**2
@@ -55,6 +55,8 @@ contains
     !ATTENTION: From this point on, the off-diag elements of s_no contains normalized
     !overlaps, while its diag elements are zeros. Therefore, s_no stores E=S-I.
     deallocate(norm)
+    write(*, '("check sum s_no = ", es18.10)') sum(abs(s_no))
+    call flush()
 
     
     !==== Calculate X ====!
@@ -93,14 +95,14 @@ contains
   subroutine tpw_orthogonalize(ortho, nk, nmo, e_proj, s_tpw, max_order, tol, ocheck, &
        northo, d_ortho, e_ortho) bind(c, name='ftpw_orthogonalize')
 
-    use mod_numc, only : czero, cone
-    use mod_tools, only : tools_zgemm, tools_zheev
+    use mod_fnumc, only : czero, cone
+    use mod_ftools, only : tools_zgemm, tools_zheev
     implicit none
     integer(c_int), intent(in) :: ortho         ! 1 or 2.
     integer(c_int), intent(in) :: nk
     integer(c_int), intent(in) :: nmo
     complex(c_double_complex), intent(in) :: e_proj(nmo,nk)
-    complex(c_double_complex), intent(in) :: s_tpw(nk,nk)
+    complex(c_double_complex), intent(inout) :: s_tpw(nk,nk)
     integer(c_int), intent(in) :: max_order
     real(c_double), intent(in) :: tol
     logical(c_bool), intent(in) :: ocheck
@@ -122,7 +124,7 @@ contains
        allocate(s(nk), source=0.0d0)
        call tools_zheev(nk, s_tpw, s)
        !^^ After the call above, s_tpw contains the eigenvectors of s_tpw before the call.
-       d_ortho = czeros
+       d_ortho = czero
        northo = 0
        !vv Columns of d_ortho correspond to the eigenvectors of s_tpw in DESCENDING order of the eigenvalues.
        do i = nk, 1, -1
@@ -148,5 +150,6 @@ contains
   end subroutine tpw_orthogonalize
   !=======================================================
   
-end module mod_tpw
+end module mod_ftpw
+
 

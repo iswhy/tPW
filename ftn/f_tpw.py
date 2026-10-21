@@ -7,22 +7,22 @@ fortlib = ct.CDLL(thisdir + '/../lib/libftpw.so')
 
 
 #============================================================
-def FTPW_orthogonalize(ortho, nk, nmo, e_proj, s_tpw, max_order, tol, ocheck):
+def FTPW_orthogonalize(ortho, nk, nmo, e_proj, s_tpw, max_order=10, tol=1E-10, ocheck=True):
 
 
     #==== Set argument types ====#
     fortlib.ftpw_orthogonalize.argtypes = \
         [
-            ct.POINTER(ct.c_int)
-            ct.POINTER(ct.c_int)
-            ct.POINTER(ct.c_int)
-            ct.POINTER(ct.c_double_complex)
-            ct.POINTER(ct.c_double_complex)
-            ct.POINTER(ct.c_int)
-            ct.POINTER(ct.c_double)
-            ct.POINTER(ct.c_bool)
-            ct.POINTER(ct.c_int)
-            ct.POINTER(ct.c_double_complex)
+            ct.POINTER(ct.c_int),
+            ct.POINTER(ct.c_int),
+            ct.POINTER(ct.c_int),
+            ct.POINTER(ct.c_double_complex),
+            ct.POINTER(ct.c_double_complex),
+            ct.POINTER(ct.c_int),
+            ct.POINTER(ct.c_double),
+            ct.POINTER(ct.c_bool),
+            ct.POINTER(ct.c_int),
+            ct.POINTER(ct.c_double_complex),
             ct.POINTER(ct.c_double_complex)
         ]
 
@@ -30,6 +30,7 @@ def FTPW_orthogonalize(ortho, nk, nmo, e_proj, s_tpw, max_order, tol, ocheck):
     e_proj = e_proj.astype(ct.c_double_complex, order="F")
     e_proj_ptr = e_proj.ctypes.data_as(ct.POINTER(ct.c_double_complex))
 
+    #==== Prepare array in/outputs ====#
     s_tpw = s_tpw.astype(ct.c_double_complex, order="F")
     s_tpw_ptr = s_tpw.ctypes.data_as(ct.POINTER(ct.c_double_complex))
 
@@ -58,5 +59,5 @@ def FTPW_orthogonalize(ortho, nk, nmo, e_proj, s_tpw, max_order, tol, ocheck):
                                d_ortho_ptr,
                                e_ortho_ptr)
 
-    return northo.value, d_ortho, e_ortho
+    return s_tpw, northo.value, d_ortho, e_ortho
 #============================================================

@@ -5,6 +5,8 @@ from aopwints_xa import integral_mix_edit as aopw_xa
 import cint_gpw as aopw_xn
 from pyscf import scf, gto, ao2mo
 from pyscf.tools import fcidump
+from tPW.ftn.f_tpw import FTPW_orthogonalize
+
 
 
 #=============================================================
@@ -749,9 +751,20 @@ def projected_tpw(mol, pw_k, xlim, ylim, zlim, w, cf, verb=0):
               'Please wait ...', flush=True)
     S_cross_ao = get_ovlp_cross(mol, pw_k, xlim, ylim, zlim, w)
 
-    return -1 * np.einsum('ij, ik -> jk', cf, S_cross_ao, optimize=True)
+    #return -1 * np.einsum('ij, ik -> jk', cf, S_cross_ao, optimize=True)
+    return -1 * cf.T @ S_cross_ao
 #============================================================
 
+
+#============================================================
+def get_binom(max_order):
+    c = np.zeros(max_order+1)
+    c[0] = 1.0
+    for i in range(1, max_order+1):
+        c[i] = -(2*i-1) / (2*i) * c[i-1]
+
+    return c
+#============================================================
 
 #============================================================
 def get_symm_X(S, max_order=10, tol=1E-10, enforce=True):
@@ -759,23 +772,24 @@ def get_symm_X(S, max_order=10, tol=1E-10, enforce=True):
     Calculates the transformation matrix in the symmetric orthogonalization method using
     matrix iteration.
     '''
-    
+
+    cc = get_binom(max_order)    
     norm = np.sqrt(np.diag(S))
     S_norm = np.diag(1/norm) @ S @ np.diag(1/norm)
-    E = S_norm - np.eye(S_norm.shape[0])
     
     X = np.eye(S_norm.shape[0], dtype=complex)
+    E = S_norm - np.eye(S_norm.shape[0])
+    correction = E.copy()
     for i in range(1,max_order+1):
-        correction = E.copy()
-        if i > 1:
-            correction = correction @ E
-        cc = (-1)**i * comb(2*i, i) / 4**i
-        X += cc * correction
-        error_series = np.linalg.norm(correction)
+        error_series = np.linalg.norm(cc[i]*correction)
         error_ortho = np.linalg.norm(X.conj().T @ S_norm @ X - np.eye(S_norm.shape[0]))
+        print("%4d %15.8e %15.8e %15.8e" % (i, cc[i], error_series, error_ortho), flush=True)
         isconv = error_series < tol and error_ortho < tol
         if isconv:
             break
+        X += cc[i] * correction
+        correction = correction @ E
+        
 
     conv_msg = 'Matrix iteration has reached the specified limit but convergence ' + \
             'has not been attained.'
@@ -790,12 +804,15 @@ def get_symm_X(S, max_order=10, tol=1E-10, enforce=True):
 
 #============================================================
 def orthogonalized_tpw(ortho, e_proj, canon_thr=1E-4, verb=0, *, S_tpw=None, kxvec=None, 
-                      kyvec=None, kzvec=None, xlim=None, ylim=None, zlim=None, w=None):
+                       kyvec=None, kzvec=None, xlim=None, ylim=None, zlim=None, w=None,
+                       legacy=False):
 
     if verb >= 1:
         print(f'Performing canonical orthogonalization of projected PWs. Please wait ...',
           flush=True)
         
+    nmo, nk = e_proj.shape
+
     if S_tpw is None:
         if all([var is not None for var in (kxvec, kyvec, kzvec, xlim, ylim, zlim, w)]):
             time0 = time.time()
@@ -805,26 +822,37 @@ def orthogonalized_tpw(ortho, e_proj, canon_thr=1E-4, verb=0, *, S_tpw=None, kxv
             raise ValueError('If S_tpw is not given or is None, all of kxvec, kyvec, kzvec, ' +
                              'xlim, ylim, zlim, and w must be given.')
 
-    S_cross_mo = -e_proj
-    S_proj = S_tpw - S_cross_mo.conj().T @ S_cross_mo    # S_proj is the overlap matrix among projected TPWs.
+    assert ortho == 'canon' or ortho == 'symm', \
+        f'Unavailable option specified for ortho, ortho = {ortho}.'
     
-    #vv These orthogonalization methods also orthonormalize the output vectors regardless
-    # of the normalization of the input vectors.
-    if ortho == 'canon':
-        s, U = scipy.linalg.eigh(S_proj)
-        X = U[:,s>=canon_thr] @ np.diag([1/np.sqrt(s0) for s0 in s[s>=canon_thr]])
-    elif ortho == 'symm':
-        X = get_symm_X(S_proj)
-        #X = U @ np.diag([1/np.sqrt(s0) for s0 in s]) @ U.conj().T
+    if legacy:
+        S_cross_mo = -e_proj
+        S_proj = S_tpw - S_cross_mo.conj().T @ S_cross_mo    # S_proj is the overlap matrix among projected TPWs.
+        
+        #vv These orthogonalization methods also orthonormalize the output vectors regardless
+        # of the normalization of the input vectors.
+        if ortho == 'canon':
+            s, U = scipy.linalg.eigh(S_proj)
+            X = U[:,s>=canon_thr] @ np.diag([1/np.sqrt(s0) for s0 in s[s>=canon_thr]])
+        elif ortho == 'symm':
+            X = get_symm_X(S_proj)
+            #X = U @ np.diag([1/np.sqrt(s0) for s0 in s]) @ U.conj().T
+
+        n_ortho = X.shape[1]
+        d_ortho = X
+        e_ortho = np.einsum('ij, jk -> ik', e_proj, X, optimize=True)
     else:
-        raise ValueError(f'Unavailable option specified for ortho, ortho = {ortho}.')
-    #print('ovl_kp = ', X.conj().T @ S_proj @ X)
+        if ortho == 'canon':
+            iortho = 1
+        elif ortho == 'symm':
+            iortho = 2
+        _, n_ortho, d_ortho, e_ortho = FTPW_orthogonalize(iortho, nk, nmo, e_proj, S_tpw)
 
     if verb >= 1:
-        print('No. of discarded projected plane waves = ', S_proj.shape[1] - X.shape[1],
-              flush=True)
+        print('No. of discarded projected plane waves = ', nk - n_ortho, flush=True)
+
     
-    return X, np.einsum('ij, jk -> ik', e_proj, X, optimize=True)
+    return d_ortho, e_ortho
 #============================================================
 
 
@@ -974,6 +1002,11 @@ def effective_tpw(d_ortho, e_ortho, cf, mol, sv_thr=-1, verb=0, *, S_cross_ao=No
 #============================================================
 def get_effective_tpw(mol, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, sv_thr=-1, verb=0):
 
+    '''
+    Calculates the expansion coefficients of effective tPW. Good for small number of 3D k
+    points.
+    '''
+    
     Volume = (xlim[1]-xlim[0]+2*w) * (ylim[1]-ylim[0]+2*w) * (zlim[1]-zlim[0]+2*w)
     norm = np.sqrt(Volume)
     nao = mol.nao
@@ -1020,6 +1053,172 @@ def get_effective_tpw(mol, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, sv_thr=
     return sv, d_eff, e_eff
 #============================================================
 
+
+#============================================================
+def apply_3kron(A, B, C, v):
+    nA, mA = A.shape
+    nB, mB = B.shape
+    nC, mC = C.shape
+
+    # Apply C along the third dimension
+    Y = C @ v.reshape((mA*mB, mC)).T  # Y.shape = (nC, mA*mB), mB > mA
+
+    # Apply B along the second dimension
+    Z = B @ Y.T.reshape((mB,nC*mA), order='F')   # Z.shape = (nB, nC*mA), mA > nC
+
+    # Apply A along the first dimension
+    W = A @ Z.T.reshape((mA,nB*nC), order='F')   # W.shape = (nA, nB*nC), nC > nB
+
+    return W.ravel()
+#============================================================
+
+
+#============================================================
+def get_effective_tpw_e():
+    '''
+    Calculates the expansion coefficients of effective tPW. Good for small and large number
+    of 3D k points.
+    '''
+
+    #--------------------------------------------------------
+    def _apply_E(vin, Sx, Sy, Sz, S_cross):
+
+        '''
+        Apply E on a vector where E = S_proj_norm - I.
+        '''
+
+        Sx_diag = np.diag(Sx)
+        Sy_diag = np.diag(Sy)
+        Sz_diag = np.diag(Sz)
+
+        norm = np.kron(np.kron(Sx_diag, Sy_diag), Sz_diag) - \
+            np.einsum('ij,ij->j', S_cross.conj(), S_cross)
+        norm = np.sqrt(norm.real)
+
+        #vv Do S_proj_norm vin = (1/norm S_proj 1/norm) vin
+        # where S_proj = Sx \oprod Sy \oprod Sz - S_cross^\dagger S_cross
+        vout = apply_3kron(Sx, Sy, Sz, vin/norm)     # Calculate S_tpw vin where S_tpw is half-normalized.
+        vout += - S_cross.conj().T @ (S_cross @ vin/norm)
+        vout /= norm       # Full-normalization
+
+        vout -= vin
+        
+        return vout
+    #--------------------------------------------------------
+    
+    #--------------------------------------------------------
+    def _apply_symm_X(vin, c, Sx, Sy, Sz, S_cross, max_order=10, tol=1E-10):
+        '''
+        S_cross:
+          <F_m|P_k> where F_m is an MO.
+        Sx, Sy, Sz:
+          The x, y, and z parts of the overlap between tPWs, respectively.
+        '''
+
+        icode = 1
+        vout = c[0] * vin
+        win = vin.copy()
+        for i in range(1, max_order+1):
+            wout = _apply_E(win, Sx, Sy, Sz, S_cross)
+            vout += c[i] * wout
+            if np.linalg.norm(c[i]*wout) < tol:
+                icode = 0
+                break
+            win = wout.copy()
+                
+        return vout, icode
+    #--------------------------------------------------------
+
+    #--------------------------------------------------------
+    def _apply_G(vin, Sx, Sy, Sz, S_cross, h1e_mol, h1e_cross, g2e_mmmm, g2e_mmmk, c, 
+                 E, max_order=10, tol=1E-10):
+        
+        Xv, icode = _apply_symm_X(vin.ravel(), c, Sx, Sy, Sz, S_cross, max_order, tol)
+        assert icode == 0, \
+            'The application of X on vin is not converged, try decreasing tol or ' + \
+            'increasing max_order.'
+
+        vout_1e_1 = h1e_cross @ Xv
+        vout_1e_2 = h1e_mol @ (S_cross @ Xv)
+
+        vout_2e_1 = g2e_mmmk @ Xv
+        vout_2e_2 = g2e_mmmm @ (S_cross @ Xv)
+
+        return np.hstack(((vout_1e_1-vout_1e_2).ravel(),
+                          (vout_2e_1-vout_2e_2).ravel()))
+    #--------------------------------------------------------
+        
+        
+
+    Volume = (xlim[1]-xlim[0]+2*w) * (ylim[1]-ylim[0]+2*w) * (zlim[1]-zlim[0]+2*w)
+    norm = np.sqrt(Volume)
+    nao = mol.nao
+    pw_k = assemble_ks(kxvec, kyvec, kzvec)
+    nk = len(pw_k)
+    
+    
+
+
+    T_mol_ao = mol.intor('int1e_kin_sph')
+    V_mol_ao = mol.intor('int1e_nuc_sph')
+    h1e_mol = cf.T @ (T_mol_ao + V_mol_ao) @ cf
+
+    g2e_mmmm = ao2mo.kernel(mol, cf, intor='int2e_sph', aosym='s2ij')
+    #^^ g2e_mmmm is a matrix, 's2ij' means the first two indices form independent pairs,
+    # nao*(nao+1)/2. The last two indices  cover all pairs, nao*nao.
+    g2e_mmmm = g2e_mmmm.reshape((nmo*g2e_mmmm.shape[0], nmo), order='F')
+    #^^ At input, g2e_mmmm is a matrix of shape (nmo*(nmo+1)/2, nmo^2), so, we use order='F' to match
+    # the index ordering of the rows of g2e_mmmm to that of g2e_mmmk. In this reordering, the first nmo
+    # columns are stacked on top of each other to form the first column of the reordered matrix. The
+    # remaining columns are reordered accordingly.
+
+
+    if INTS_ALGO == 'xa':
+        S_cross_ao = aopw_xa.ao_pw_ovlp(mol, pw_k) / norm
+        pw_kin = 0.5 * np.einsum("pi,pi->p", pw_k, pw_k)
+        T_cross_ao = pw_kin[None,:] * S_cross_ao
+        V_cross_ao = aopw_xa.ao_pw_pot(mol, pw_k) / norm
+        g2e_kbbb = aopw_xa.int_2e(mol, pw_k, set(['kbbb']), pw_norm=1/norm)
+        sortid = aopw_xa.sort_kbbb(g2e_kbbb, nao)
+        g2e_kbbb = [g2e_kbbb[i] for i in sortid]
+    elif INTS_ALGO == 'xn':
+        with aopw_xn.prepare(mol) as opt:
+            S_cross_ao = aopw_xn.ovlp(mol, pw_k, opt=opt).T / norm
+            T_cross_ao = aopw_xn.kin(mol, pw_k, opt=opt).T / norm
+            V_cross_ao = aopw_xn.nuc(mol, pw_k, opt=opt).T / norm
+            bkbb = aopw_xn.gpgg(mol, pw_k, opt=opt)
+            
+        g2e_kbbb = []
+        for k in range(nk):
+            for p in range(nao):
+                for q in range(nao):
+                    for r in range(q+1):
+                        g2e_kbbb.append(INT2e((nao+k, p, q, r), bkbb[k,p,q,r].conj()/norm))
+
+
+    S_cross = cf.T @ S_cross_ao
+    h1e_cross = cf.T @ (T_cross_ao + V_cross_ao)
+
+
+    #==== Computation of (mm|mk) matrix from (ka|aa) ====#
+    sortid_2e = aopw_xa.sort_kbbb(g2e_kbbb, nao)
+    g2e_kmmm = aopw_xa.int2e_ao2mo_kbbb(cf, [g2e_kbbb[i] for i in sortid_2e], nk)
+    sortid_2e = aopw_xa.sort_kbbb(g2e_kmmm, nmo)
+    n3b = round(len(g2e_kbbb)/nk)
+    g2e_mmmk = np.array([g2e_kmmm[i].value.conj() for i in sortid_2e]).reshape((n3b,nk), order='F')
+    #^^ (mm|mk) = (mm|km)* = (km|mm)*
+    #^^ g2e_mmmk is a matrix where the columns identify PWs and the rows identify groups
+    # of three MOs. Since k is the slowest moving index in g2e_kmmm, doing reshape((n3b,nk), order='F')
+    # as above rearrange g2e_kmmm into a matrix where a given column is associated to a particular k and
+    # a particular row corresponds to three-MO index (q,r,s) with q and r running from 0 to nmo-1 and s
+    # from 0 to r.
+
+    
+    cc = get_binom(max_order)
+    matvec_func = partial(_apply_G, S_cross, h1e_mol, h1e_cross, g2e_mmmm, g2e_mmmk, cc, E, max_order=10,
+                 tol=1E-10)
+    
+    return
 
 #============================================================
 def compare_pyscf(mol, cf, pw_k):
