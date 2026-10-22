@@ -162,7 +162,7 @@ contains
     logical(c_bool), intent(out) :: isconv
 
     complex(c_double_complex), allocatable, target :: P(:,:), Pnext(:,:)
-    complex(c_double_complex), pointer :: cur(:,:), nxt(:,:), tmp(:,:), nxt1(:)
+    complex(c_double_complex), pointer :: cur(:,:), nxt(:,:), tmp(:,:)  !, nxt1(:)
     real(c_double) :: err_series, err_series2
     real(c_double), external :: dznrm2
     integer(c_int) :: i, k
@@ -188,9 +188,9 @@ contains
        ! Frobenius norm of the current term c(k)*E^k
        !err_series = abs(c(k)) * dznrm2(n*n, cur(1,1), 1)
        err_series = abs(c(k)) * sqrt(sum(conjg(cur)*cur))
-       write(*, '("f ", i4, x, es15.8, x, es15.8)') &
-            k, c(k), err_series  !, dznrm2(n*n, cur(1,1), 1)
-       call flush()
+       !debug write(*, '("f ", i4, x, es15.8, x, es15.8)') &
+       !debug      k, c(k), err_series
+       !debug call flush()
        if (err_series < tol) exit
 
        ! Accumulate c(k) * E^k into X
@@ -200,18 +200,16 @@ contains
        if (k == max_order) exit
 
        ! Calculate E^(k+1) = E^k * E
-       !call tools_zgemm('n', 'n', n, n, n, cone, cur, E, czero, nxt)
-       do i = 1, n
-          nxt1 => Pnext(:,i)
-          call tools_zgemm('n', 'n', n, n, 1, cone, cur, E(1,i), czero, nxt1)
-          write(*, '("i = ", i7)') i
-          call flush()
-       end do
+       call tools_zgemm('n', 'n', n, n, n, cone, cur, E, czero, nxt)
+       !do i = 1, n
+       !   nxt1 => Pnext(:,i)
+       !   call tools_zgemm('n', 'n', n, n, 1, cone, cur, E(1,i), czero, nxt1)
+       !end do
 
        ! Swap working buffers without copying matrix elements
        tmp => cur
-       !cur => nxt
-       cur => Pnext
+       cur => nxt
+       !cur => Pnext
        nxt => tmp
     end do
 

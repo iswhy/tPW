@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 import math, scipy, time
 import numpy as np
+from functools import partial
+from scipy.sparse.linalg import LinearOperator, svds
 from aopwints_xa import integral_mix_edit as aopw_xa
 import cint_gpw as aopw_xn
 from pyscf import scf, gto, ao2mo
@@ -783,7 +785,7 @@ def get_symm_X(S, max_order=10, tol=1E-10, enforce=True):
     for i in range(1,max_order+1):
         error_series = np.linalg.norm(cc[i]*correction)
         error_ortho = np.linalg.norm(X.conj().T @ S_norm @ X - np.eye(S_norm.shape[0]))
-        print("%4d %15.8e %15.8e %15.8e" % (i, cc[i], error_series, error_ortho), flush=True)
+        #debug print("%4d %15.8e %15.8e %15.8e" % (i, cc[i], error_series, error_ortho), flush=True)
         isconv = error_series < tol and error_ortho < tol
         if isconv:
             break
@@ -794,7 +796,8 @@ def get_symm_X(S, max_order=10, tol=1E-10, enforce=True):
     conv_msg = 'Matrix iteration has reached the specified limit but convergence ' + \
             'has not been attained.'
     if enforce:
-        assert isconv, 'ERROR: ' + conv_msg
+        assert isconv, 'ERROR: ' + conv_msg + '\n' + \
+            f'Series error = {error_series:.6e} and orthogonalization error = {error_ortho:.6e}.'
     else:
         if not isconv: print('WARNING: ' + conv_msg)
         
@@ -805,7 +808,7 @@ def get_symm_X(S, max_order=10, tol=1E-10, enforce=True):
 #============================================================
 def orthogonalized_tpw(ortho, e_proj, canon_thr=1E-4, verb=0, *, S_tpw=None, kxvec=None, 
                        kyvec=None, kzvec=None, xlim=None, ylim=None, zlim=None, w=None,
-                       legacy=False):
+                       legacy=False, max_order=10, tol=1E-10):
 
     if verb >= 1:
         print(f'Performing canonical orthogonalization of projected PWs. Please wait ...',
@@ -835,7 +838,7 @@ def orthogonalized_tpw(ortho, e_proj, canon_thr=1E-4, verb=0, *, S_tpw=None, kxv
             s, U = scipy.linalg.eigh(S_proj)
             X = U[:,s>=canon_thr] @ np.diag([1/np.sqrt(s0) for s0 in s[s>=canon_thr]])
         elif ortho == 'symm':
-            X = get_symm_X(S_proj)
+            X = get_symm_X(S_proj, max_order, tol)
             #X = U @ np.diag([1/np.sqrt(s0) for s0 in s]) @ U.conj().T
 
         n_ortho = X.shape[1]
@@ -846,7 +849,8 @@ def orthogonalized_tpw(ortho, e_proj, canon_thr=1E-4, verb=0, *, S_tpw=None, kxv
             iortho = 1
         elif ortho == 'symm':
             iortho = 2
-        _, n_ortho, d_ortho, e_ortho = FTPW_orthogonalize(iortho, nk, nmo, e_proj, S_tpw)
+        _, n_ortho, d_ortho, e_ortho = FTPW_orthogonalize(iortho, nk, nmo, e_proj, S_tpw,
+                                                          max_order, tol)
 
     if verb >= 1:
         print('No. of discarded projected plane waves = ', nk - n_ortho, flush=True)
@@ -992,6 +996,8 @@ def effective_tpw(d_ortho, e_ortho, cf, mol, sv_thr=-1, verb=0, *, S_cross_ao=No
     U, sv, Vt = scipy.linalg.svd(G, full_matrices=False)
     B = Vt[sv>sv_thr,:].conj().T
 
+    print('Vh mm = ', B)
+    
     return \
         sv[sv>sv_thr], \
         np.einsum('ij,jk->ik', d_ortho, B, optimize=True), \
@@ -1000,7 +1006,8 @@ def effective_tpw(d_ortho, e_ortho, cf, mol, sv_thr=-1, verb=0, *, S_cross_ao=No
 
 
 #============================================================
-def get_effective_tpw(mol, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, sv_thr=-1, verb=0):
+def get_effective_tpw(mol, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, ortho, legacy=False, 
+                      canon_thr=1E-4, max_order=10, tol=1E-10, sv_thr=-1, verb=0):
 
     '''
     Calculates the expansion coefficients of effective tPW. Good for small number of 3D k
@@ -1020,7 +1027,8 @@ def get_effective_tpw(mol, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, sv_thr=
 
     #==== Step 2: Orthogonalization of the projected vectors ====!
     S_tpw = get_ovlp_tpw(kxvec, kyvec, kzvec, xlim, ylim, zlim, w)
-    d_ortho, e_ortho = orthogonalized_tpw(ortho, e_proj, canon_thr, verb, S_tpw=S_tpw)
+    d_ortho, e_ortho = orthogonalized_tpw(ortho, e_proj, canon_thr, verb, S_tpw=S_tpw,
+                                          legacy=legacy, max_order=max_order, tol=tol)
 
 
     #==== Step 3: Perform SVD on the coupling matrix ====#
@@ -1074,7 +1082,8 @@ def apply_3kron(A, B, C, v):
 
 
 #============================================================
-def get_effective_tpw_e():
+def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
+                        max_order=15, tol=1E-10, verb=0):
     '''
     Calculates the expansion coefficients of effective tPW. Good for small and large number
     of 3D k points.
@@ -1098,7 +1107,7 @@ def get_effective_tpw_e():
         #vv Do S_proj_norm vin = (1/norm S_proj 1/norm) vin
         # where S_proj = Sx \oprod Sy \oprod Sz - S_cross^\dagger S_cross
         vout = apply_3kron(Sx, Sy, Sz, vin/norm)     # Calculate S_tpw vin where S_tpw is half-normalized.
-        vout += - S_cross.conj().T @ (S_cross @ vin/norm)
+        vout += - S_cross.conj().T @ (S_cross @ (vin/norm))
         vout /= norm       # Full-normalization
 
         vout -= vin
@@ -1120,49 +1129,127 @@ def get_effective_tpw_e():
         win = vin.copy()
         for i in range(1, max_order+1):
             wout = _apply_E(win, Sx, Sy, Sz, S_cross)
-            vout += c[i] * wout
-            if np.linalg.norm(c[i]*wout) < tol:
+            correction = c[i] * wout
+            vout += correction
+            cnorm = np.linalg.norm(correction)
+            if cnorm < tol:
                 icode = 0
                 break
             win = wout.copy()
                 
-        return vout, icode
+        return vout, cnorm, icode
+    #--------------------------------------------------------
+
+    #--------------------------------------------------------
+    def _apply_symm_XH(vin, c, Sx, Sy, Sz, S_cross, max_order=10, tol=1E-10):
+        '''
+        For symmetric orthogonalization, X is Hermitian.
+        '''
+        
+        return _apply_symm_X(vin, c, Sx, Sy, Sz, S_cross, max_order, tol)
     #--------------------------------------------------------
 
     #--------------------------------------------------------
     def _apply_G(vin, Sx, Sy, Sz, S_cross, h1e_mol, h1e_cross, g2e_mmmm, g2e_mmmk, c, 
-                 E, max_order=10, tol=1E-10):
+                 max_order=10, tol=1E-10):
         
-        Xv, icode = _apply_symm_X(vin.ravel(), c, Sx, Sy, Sz, S_cross, max_order, tol)
+        Xv, cnorm, icode = _apply_symm_X(vin.ravel(), c, Sx, Sy, Sz, S_cross, max_order, tol)
         assert icode == 0, \
             'The application of X on vin is not converged, try decreasing tol or ' + \
-            'increasing max_order.'
+            f'increasing max_order. Correction norm = {cnorm:.6e}'
+        SXv = S_cross @ Xv
 
         vout_1e_1 = h1e_cross @ Xv
-        vout_1e_2 = h1e_mol @ (S_cross @ Xv)
+        vout_1e_2 = h1e_mol @ SXv
 
         vout_2e_1 = g2e_mmmk @ Xv
-        vout_2e_2 = g2e_mmmm @ (S_cross @ Xv)
+        vout_2e_2 = g2e_mmmm @ SXv
 
         return np.hstack(((vout_1e_1-vout_1e_2).ravel(),
                           (vout_2e_1-vout_2e_2).ravel()))
     #--------------------------------------------------------
-        
-        
 
+    #--------------------------------------------------------
+    def _apply_GH(vin, Sx, Sy, Sz, S_cross, h1e_mol, h1e_cross, g2e_mmmm, g2e_mmmk, c, 
+                 max_order=10, tol=1E-10):
+
+        nmo = h1e_mol.shape[0]
+
+        h1e_vin = h1e_cross.conj().T @ vin[:nmo]
+        vout_1e_1, cnorm, icode = _apply_symm_XH(h1e_vin.ravel(), c, Sx, Sy, Sz, S_cross, max_order, tol)
+        assert icode == 0, \
+            'Code 0. The application of X^H on vin is not converged, try decreasing tol or ' + \
+            f'increasing max_order. Correction norm = {cnorm:.6e}'
+        
+        S_h1e_vin = S_cross.conj().T @ (h1e_mol.conj().T @ vin[:nmo])
+        vout_1e_2, cnorm, icode = _apply_symm_XH(S_h1e_vin.ravel(), c, Sx, Sy, Sz, S_cross, max_order, tol)
+        assert icode == 0, \
+            'Code 1. The application of X^H on vin is not converged, try decreasing tol or ' + \
+            f'increasing max_order. Correction norm = {cnorm:.6e}'
+
+
+        g2e_vin = g2e_mmmk.conj().T @ vin[nmo:]
+        vout_2e_1, cnorm, icode = _apply_symm_XH(g2e_vin.ravel(), c, Sx, Sy, Sz, S_cross, max_order, tol)
+        assert icode == 0, \
+            'Code 2. The application of X^H on vin is not converged, try decreasing tol or ' + \
+            f'increasing max_order. Correction norm = {cnorm:.6e}'
+
+        S_g2e_vin = S_cross.conj().T @ (g2e_mmmm.conj().T @ vin[nmo:])
+        vout_2e_2, cnorm, icode = _apply_symm_XH(S_g2e_vin.ravel(), c, Sx, Sy, Sz, S_cross, max_order, tol)
+        assert icode == 0, \
+            'Code 3. The application of X^H on vin is not converged, try decreasing tol or ' + \
+            f'increasing max_order. Correction norm = {cnorm:.6e}'
+
+        return (vout_1e_1-vout_1e_2).ravel() + (vout_2e_1-vout_2e_2).ravel()
+    #--------------------------------------------------------
+
+    #--------------------------------------------------------
+    def check_adjoint(apply_A, apply_AH, m, n, trials=5, tol=1e-10):
+        rng = np.random.default_rng(1234)
+        errors = []
+    
+        for _ in range(trials):
+            x = rng.standard_normal(n) + 1j * rng.standard_normal(n)
+            y = rng.standard_normal(m) + 1j * rng.standard_normal(m)
+    
+            Ax = apply_A(x)
+            AHy = apply_AH(y)
+    
+            lhs = np.vdot(Ax, y)
+            rhs = np.vdot(x, AHy)
+    
+            scale = max(
+                np.linalg.norm(Ax) * np.linalg.norm(y),
+                np.linalg.norm(x) * np.linalg.norm(AHy),
+                np.finfo(float).tiny
+            )
+            errors.append(abs(lhs - rhs) / scale)
+    
+        max_error = max(errors)
+        print(f"Maximum relative adjoint error: {max_error:.3e}", flush=True)
+        print("Adjoint test:", "PASSED" if max_error < tol else "FAILED", flush=True)
+    
+        return max_error
+    #--------------------------------------------------------
+
+    
+    
     Volume = (xlim[1]-xlim[0]+2*w) * (ylim[1]-ylim[0]+2*w) * (zlim[1]-zlim[0]+2*w)
     norm = np.sqrt(Volume)
-    nao = mol.nao
+    nao, nmo = cf.shape
     pw_k = assemble_ks(kxvec, kyvec, kzvec)
     nk = len(pw_k)
     
-    
+
+    print('here0', flush=True)
 
 
     T_mol_ao = mol.intor('int1e_kin_sph')
     V_mol_ao = mol.intor('int1e_nuc_sph')
     h1e_mol = cf.T @ (T_mol_ao + V_mol_ao) @ cf
 
+    print('here1', flush=True)
+    
     g2e_mmmm = ao2mo.kernel(mol, cf, intor='int2e_sph', aosym='s2ij')
     #^^ g2e_mmmm is a matrix, 's2ij' means the first two indices form independent pairs,
     # nao*(nao+1)/2. The last two indices  cover all pairs, nao*nao.
@@ -1172,6 +1259,7 @@ def get_effective_tpw_e():
     # columns are stacked on top of each other to form the first column of the reordered matrix. The
     # remaining columns are reordered accordingly.
 
+    print('here2', flush=True)
 
     if INTS_ALGO == 'xa':
         S_cross_ao = aopw_xa.ao_pw_ovlp(mol, pw_k) / norm
@@ -1196,9 +1284,12 @@ def get_effective_tpw_e():
                         g2e_kbbb.append(INT2e((nao+k, p, q, r), bkbb[k,p,q,r].conj()/norm))
 
 
+    print('here3', flush=True)
+    
     S_cross = cf.T @ S_cross_ao
     h1e_cross = cf.T @ (T_cross_ao + V_cross_ao)
 
+    print('here4', flush=True)
 
     #==== Computation of (mm|mk) matrix from (ka|aa) ====#
     sortid_2e = aopw_xa.sort_kbbb(g2e_kbbb, nao)
@@ -1213,12 +1304,53 @@ def get_effective_tpw_e():
     # a particular row corresponds to three-MO index (q,r,s) with q and r running from 0 to nmo-1 and s
     # from 0 to r.
 
-    
+    print('here5: nmo, n3b, nk', nmo, n3b, nk, flush=True)
+
     cc = get_binom(max_order)
-    matvec_func = partial(_apply_G, S_cross, h1e_mol, h1e_cross, g2e_mmmm, g2e_mmmk, cc, E, max_order=10,
-                 tol=1E-10)
+    Sx = np.sum( ovlp_tpw_1d(kxvec, xlim[0], xlim[1], w), axis=0 )
+    Sy = np.sum( ovlp_tpw_1d(kyvec, ylim[0], ylim[1], w), axis=0 )
+    Sz = np.sum( ovlp_tpw_1d(kzvec, zlim[0], zlim[1], w), axis=0 )
+
+    print('here6', flush=True)
+
     
-    return
+    apply_G = partial(_apply_G,
+                      Sx=Sx, Sy=Sy, Sz=Sz, S_cross=S_cross, h1e_mol=h1e_mol, 
+                      h1e_cross=h1e_cross, g2e_mmmm=g2e_mmmm, g2e_mmmk=g2e_mmmk, c=cc,
+                      max_order=max_order, tol=tol)
+
+    apply_GH = partial(_apply_GH,
+                       Sx=Sx, Sy=Sy, Sz=Sz, S_cross=S_cross, h1e_mol=h1e_mol, 
+                       h1e_cross=h1e_cross, g2e_mmmm=g2e_mmmm, g2e_mmmk=g2e_mmmk, c=cc,
+                       max_order=max_order, tol=tol)
+
+    adjoint_err = check_adjoint(apply_G, apply_GH, m=nmo+n3b, n=nk)
+
+    Aop = LinearOperator(shape=(nmo+n3b, nk), matvec=apply_G, rmatvec=apply_GH, dtype=complex)
+    
+    #Compute the largest k singular values and right singular vectors.
+    _, sv, Vh = svds(Aop, k=nsv, which="LM", solver="propack", return_singular_vectors="vh",
+                     tol=1e-8)
+    
+    # svds does not guarantee descending order.
+    idx = np.argsort(sv)[::-1]
+    sv = sv[idx]
+    B = Vh[idx, :].conj().T
+
+    print('Vh mv = ', B)
+    
+    #==== Calculate the coefficients ====#
+    d_eff = np.zeros((nk,len(sv)), dtype=complex)
+    for i in range(len(sv)):
+        d_eff[:,i], cnorm, icode = _apply_symm_X(B[:,i], cc, Sx, Sy, Sz, S_cross, max_order, tol)
+        assert icode == 0, \
+            f'Code B-{i}. The application of X^H on vin is not converged, try decreasing tol or ' + \
+            f'increasing max_order. Correction norm = {cnorm:.6e}'
+    e_eff = - S_cross @ d_eff
+    
+    return sv, d_eff, e_eff
+#============================================================
+
 
 #============================================================
 def compare_pyscf(mol, cf, pw_k):
