@@ -43,6 +43,18 @@ def set_algo(a):
 
 
 #============================================================
+def get_phase_ref(v, tol=1E-13):
+    phase_factor = 1.0
+    for j in range(len(v)):
+        if np.abs(v[j]) >= tol:
+            phase_factor = v[j] / np.abs(v[j])
+            break
+
+    return phase_factor
+#============================================================
+
+
+#============================================================
 def ovlp_tpw_1d(kvec, xl, xr, w):
     '''
     Calculates the overlap integral matrix among 1D tapered PWs.
@@ -995,8 +1007,9 @@ def effective_tpw(d_ortho, e_ortho, cf, mol, sv_thr=-1, verb=0, *, S_cross_ao=No
     #use the line above and the effective PW becomes complex.
     U, sv, Vt = scipy.linalg.svd(G, full_matrices=False)
     B = Vt[sv>sv_thr,:].conj().T
-
-    print('Vh mm = ', B)
+    for i in range(B.shape[1]):
+        phase_factor = get_phase_ref(B[:,i])
+        B[:,i] = phase_factor.conjugate() * B[:,i]
     
     return \
         sv[sv>sv_thr], \
@@ -1159,9 +1172,11 @@ def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
             f'increasing max_order. Correction norm = {cnorm:.6e}'
         SXv = S_cross @ Xv
 
+        #==== 1e part ====#
         vout_1e_1 = h1e_cross @ Xv
         vout_1e_2 = h1e_mol @ SXv
 
+        #==== 2e part ====#
         vout_2e_1 = g2e_mmmk @ Xv
         vout_2e_2 = g2e_mmmm @ SXv
 
@@ -1175,6 +1190,7 @@ def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
 
         nmo = h1e_mol.shape[0]
 
+        #==== 1e part ====#
         h1e_vin = h1e_cross.conj().T @ vin[:nmo]
         vout_1e_1, cnorm, icode = _apply_symm_XH(h1e_vin.ravel(), c, Sx, Sy, Sz, S_cross, max_order, tol)
         assert icode == 0, \
@@ -1188,6 +1204,7 @@ def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
             f'increasing max_order. Correction norm = {cnorm:.6e}'
 
 
+        #==== 2e part ====#
         g2e_vin = g2e_mmmk.conj().T @ vin[nmo:]
         vout_2e_1, cnorm, icode = _apply_symm_XH(g2e_vin.ravel(), c, Sx, Sy, Sz, S_cross, max_order, tol)
         assert icode == 0, \
@@ -1239,17 +1256,21 @@ def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
     nao, nmo = cf.shape
     pw_k = assemble_ks(kxvec, kyvec, kzvec)
     nk = len(pw_k)
+    assert nsv <= nk, \
+        'The number of requested effective PWs cannot exceed the number of underlying tPWs.' 
     
 
     print('here0', flush=True)
 
 
+    #==== Calculate AO-AO 1e matrices ====#
     T_mol_ao = mol.intor('int1e_kin_sph')
     V_mol_ao = mol.intor('int1e_nuc_sph')
     h1e_mol = cf.T @ (T_mol_ao + V_mol_ao) @ cf
 
     print('here1', flush=True)
-    
+
+    #==== Calculate MO-MO (mm|mm) matrix ====#
     g2e_mmmm = ao2mo.kernel(mol, cf, intor='int2e_sph', aosym='s2ij')
     #^^ g2e_mmmm is a matrix, 's2ij' means the first two indices form independent pairs,
     # nao*(nao+1)/2. The last two indices  cover all pairs, nao*nao.
@@ -1261,6 +1282,7 @@ def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
 
     print('here2', flush=True)
 
+    #==== Calculate AO-PW 1e and 2e matrices ====#
     if INTS_ALGO == 'xa':
         S_cross_ao = aopw_xa.ao_pw_ovlp(mol, pw_k) / norm
         pw_kin = 0.5 * np.einsum("pi,pi->p", pw_k, pw_k)
@@ -1285,13 +1307,13 @@ def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
 
 
     print('here3', flush=True)
-    
+
+    #==== Calculate MO-PW 1e matrices ====#
     S_cross = cf.T @ S_cross_ao
     h1e_cross = cf.T @ (T_cross_ao + V_cross_ao)
 
-    print('here4', flush=True)
 
-    #==== Computation of (mm|mk) matrix from (ka|aa) ====#
+    #==== Calculate MO-PW 2e (mm|mk) matrices from (ka|aa) ====#
     sortid_2e = aopw_xa.sort_kbbb(g2e_kbbb, nao)
     g2e_kmmm = aopw_xa.int2e_ao2mo_kbbb(cf, [g2e_kbbb[i] for i in sortid_2e], nk)
     sortid_2e = aopw_xa.sort_kbbb(g2e_kmmm, nmo)
@@ -1306,39 +1328,43 @@ def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
 
     print('here5: nmo, n3b, nk', nmo, n3b, nk, flush=True)
 
+
+    #==== Define G and G^H linear operators ====#
     cc = get_binom(max_order)
     Sx = np.sum( ovlp_tpw_1d(kxvec, xlim[0], xlim[1], w), axis=0 )
     Sy = np.sum( ovlp_tpw_1d(kyvec, ylim[0], ylim[1], w), axis=0 )
     Sz = np.sum( ovlp_tpw_1d(kzvec, zlim[0], zlim[1], w), axis=0 )
-
-    print('here6', flush=True)
-
-    
     apply_G = partial(_apply_G,
                       Sx=Sx, Sy=Sy, Sz=Sz, S_cross=S_cross, h1e_mol=h1e_mol, 
                       h1e_cross=h1e_cross, g2e_mmmm=g2e_mmmm, g2e_mmmk=g2e_mmmk, c=cc,
                       max_order=max_order, tol=tol)
-
     apply_GH = partial(_apply_GH,
                        Sx=Sx, Sy=Sy, Sz=Sz, S_cross=S_cross, h1e_mol=h1e_mol, 
                        h1e_cross=h1e_cross, g2e_mmmm=g2e_mmmm, g2e_mmmk=g2e_mmmk, c=cc,
                        max_order=max_order, tol=tol)
 
+    
+    print('here6', flush=True)
+
+    
+    #==== Ensure adjointness between G and G^H ====#
     adjoint_err = check_adjoint(apply_G, apply_GH, m=nmo+n3b, n=nk)
 
-    Aop = LinearOperator(shape=(nmo+n3b, nk), matvec=apply_G, rmatvec=apply_GH, dtype=complex)
     
-    #Compute the largest k singular values and right singular vectors.
+    #==== Solve the iterative SVD ====#
+    Aop = LinearOperator(shape=(nmo+n3b, nk), matvec=apply_G, rmatvec=apply_GH, dtype=complex)
     _, sv, Vh = svds(Aop, k=nsv, which="LM", solver="propack", return_singular_vectors="vh",
                      tol=1e-8)
     
-    # svds does not guarantee descending order.
+    #==== Construct the transformation matrix ====#
     idx = np.argsort(sv)[::-1]
     sv = sv[idx]
     B = Vh[idx, :].conj().T
+    for i in range(len(sv)):
+        phase_factor = get_phase_ref(B[:,i])
+        B[:,i] = phase_factor.conjugate() * B[:,i]
 
-    print('Vh mv = ', B)
-    
+        
     #==== Calculate the coefficients ====#
     d_eff = np.zeros((nk,len(sv)), dtype=complex)
     for i in range(len(sv)):
