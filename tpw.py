@@ -988,7 +988,7 @@ def effective_tpw(d_ortho, e_ortho, cf, mol, sv_thr=-1, verb=0, *, S_cross_ao=No
     S_cross_ao = _check_existence(S_cross_ao, get_ovlp_cross, 0, mol, pw_k, xlim, ylim, zlim, w)
     T_cross_ao = _check_existence(T_cross_ao, get_kin_cross, 1, mol, pw_k, xlim, ylim, zlim, w)
     V_cross_ao = _check_existence(V_cross_ao, get_vnuc_cross, 2, mol, pw_k, xlim, ylim, zlim, w)
-    if efield is not None:
+    if efield is not None and D_cross_ao is None:
         D_cross_ao = _check_existence(D_cross_ao, get_dipole_cross, 3, mol, pw_k, xlim, ylim, zlim, w)
     if verb >= 1:
         print(f'Time spent for computing 1e integrals = {time.time()-thistime:.3f}')
@@ -1020,7 +1020,7 @@ def effective_tpw(d_ortho, e_ortho, cf, mol, sv_thr=-1, verb=0, *, S_cross_ao=No
 
 #============================================================
 def get_effective_tpw(mol, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, ortho, legacy=False, 
-                      canon_thr=1E-4, max_order=10, tol=1E-10, sv_thr=-1, verb=0):
+                      canon_thr=1E-4, max_order=10, tol=1E-10, sv_thr=-1, efield=None, verb=0):
 
     '''
     Calculates the expansion coefficients of effective tPW. Good for small number of 3D k
@@ -1053,12 +1053,17 @@ def get_effective_tpw(mol, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, ortho, 
         g2e_kbbb = aopw_xa.int_2e(mol, pw_k, set(['kbbb']), pw_norm=1/norm)
         sortid = aopw_xa.sort_kbbb(g2e_kbbb, nao)
         g2e_kbbb = [g2e_kbbb[i] for i in sortid]
+        if efield is not None:
+            D_cross_ao = aopw_xa.ao_pw_dipole(mol, pw_k) / norm
     elif INTS_ALGO == 'xn':
         with aopw_xn.prepare(mol) as opt:
             S_cross_ao = aopw_xn.ovlp(mol, pw_k, opt=opt).T / norm
             T_cross_ao = aopw_xn.kin(mol, pw_k, opt=opt).T / norm
             V_cross_ao = aopw_xn.nuc(mol, pw_k, opt=opt).T / norm
             bkbb = aopw_xn.gpgg(mol, pw_k, opt=opt)
+            if efield is not None:
+                #vv aopw_xn.dipole returns (nk,3,nao) while we want (3,nao,nk).
+                D_cross_ao = aopw_xn.dipole(mol, pw_k, opt=opt).transpose(1,2,0) / norm
             
         g2e_kbbb = []
         for k in range(nk):
@@ -1069,7 +1074,8 @@ def get_effective_tpw(mol, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, ortho, 
 
     sv, d_eff, e_eff = effective_tpw(d_ortho, e_ortho, cf, mol, sv_thr, verb,
                                      S_cross_ao=S_cross_ao, T_cross_ao=T_cross_ao,
-                                     V_cross_ao=V_cross_ao, g2e_kbbb=g2e_kbbb)
+                                     V_cross_ao=V_cross_ao, g2e_kbbb=g2e_kbbb,
+                                     efield=efield, D_cross_ao=D_cross_ao)
 
     return sv, d_eff, e_eff
 #============================================================
@@ -1095,8 +1101,8 @@ def apply_3kron(A, B, C, v):
 
 
 #============================================================
-def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
-                        max_order=15, tol=1E-10, verb=0):
+def get_effective_tpw_mv(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
+                         max_order=15, tol=1E-10, efield=None, verb=0):
     '''
     Calculates the expansion coefficients of effective tPW. Good for small and large number
     of 3D k points.
@@ -1164,7 +1170,13 @@ def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
 
     #--------------------------------------------------------
     def _apply_G(vin, Sx, Sy, Sz, S_cross, h1e_mol, h1e_cross, g2e_mmmm, g2e_mmmk, c, 
-                 max_order=10, tol=1E-10):
+                 D_mol=None, D_cross=None, max_order=10, tol=1E-10):
+
+        assert len(vin) == h1e_cross.shape[1], \
+            f'The length of input vector, {len(vin)}, to _apply_G must be equal to ' + \
+            f'{h1e_cross.shape[1]}.'
+        assert (D_mol is None) == (D_cross is None), \
+            '_apply_G: If either D_mol or D_cross is provided, the other one must be provided too.'
         
         Xv, cnorm, icode = _apply_symm_X(vin.ravel(), c, Sx, Sy, Sz, S_cross, max_order, tol)
         assert icode == 0, \
@@ -1180,16 +1192,37 @@ def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
         vout_2e_1 = g2e_mmmk @ Xv
         vout_2e_2 = g2e_mmmm @ SXv
 
-        return np.hstack(((vout_1e_1-vout_1e_2).ravel(),
+        #==== Output without dipole ====#
+        vout = np.hstack(((vout_1e_1-vout_1e_2).ravel(),
                           (vout_2e_1-vout_2e_2).ravel()))
+
+        #==== Output with dipole ====#
+        if D_mol is not None and D_cross is not None:
+            vout_dip_1 = D_cross @ Xv
+            vout_dip_2 = D_mol @ SXv
+            vout = np.hstack( (vout, (vout_dip_1-vout_dip_2).ravel()) )
+
+        return vout
     #--------------------------------------------------------
 
     #--------------------------------------------------------
     def _apply_GH(vin, Sx, Sy, Sz, S_cross, h1e_mol, h1e_cross, g2e_mmmm, g2e_mmmk, c, 
-                 max_order=10, tol=1E-10):
+                  D_mol=None, D_cross=None, max_order=10, tol=1E-10):
 
-        nmo = h1e_mol.shape[0]
+        nmo = h1e_cross.shape[0]
+        n3b = g2e_mmmk.shape[0]
+        assert (D_mol is None) == (D_cross is None), \
+            '_apply_GH: If either D_mol or D_cross is provided, the other one must be provided too.'
+        using_dipole = D_mol is not None and D_cross is not None
+        if using_dipole:
+            ndip = nmo
+        else:
+            ndip = 0
+        assert len(vin) == nmo + n3b + ndip, \
+            f'The length of input vector, {len(vin)}, to _apply_GH must be equal to ' + \
+            f'{nmo}+{n3b}+{ndip} = {nmo+n3b+ndip}.'
 
+        
         #==== 1e part ====#
         h1e_vin = h1e_cross.conj().T @ vin[:nmo]
         vout_1e_1, cnorm, icode = _apply_symm_XH(h1e_vin.ravel(), c, Sx, Sy, Sz, S_cross, max_order, tol)
@@ -1205,19 +1238,43 @@ def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
 
 
         #==== 2e part ====#
-        g2e_vin = g2e_mmmk.conj().T @ vin[nmo:]
+        g2e_vin = g2e_mmmk.conj().T @ vin[nmo:nmo+n3b]
         vout_2e_1, cnorm, icode = _apply_symm_XH(g2e_vin.ravel(), c, Sx, Sy, Sz, S_cross, max_order, tol)
         assert icode == 0, \
             'Code 2. The application of X^H on vin is not converged, try decreasing tol or ' + \
             f'increasing max_order. Correction norm = {cnorm:.6e}'
 
-        S_g2e_vin = S_cross.conj().T @ (g2e_mmmm.conj().T @ vin[nmo:])
+        S_g2e_vin = S_cross.conj().T @ (g2e_mmmm.conj().T @ vin[nmo:nmo+n3b])
         vout_2e_2, cnorm, icode = _apply_symm_XH(S_g2e_vin.ravel(), c, Sx, Sy, Sz, S_cross, max_order, tol)
         assert icode == 0, \
             'Code 3. The application of X^H on vin is not converged, try decreasing tol or ' + \
             f'increasing max_order. Correction norm = {cnorm:.6e}'
 
-        return (vout_1e_1-vout_1e_2).ravel() + (vout_2e_1-vout_2e_2).ravel()
+
+        #==== Output without dipole ====#
+        vout = (vout_1e_1-vout_1e_2).ravel() + (vout_2e_1-vout_2e_2).ravel()
+
+        
+        #==== Dipole part ====#
+        if using_dipole:
+            D_vin = D_cross.conj().T @ vin[nmo+n3b:]
+            vout_dip_1, cnorm, icode = _apply_symm_XH(D_vin.ravel(), c, Sx, Sy, Sz,
+                                                      S_cross, max_order, tol)
+            assert icode == 0, \
+                'Code 4. The application of X^H on vin is not converged, try decreasing ' + \
+                f'tol or increasing max_order. Correction norm = {cnorm:.6e}'
+            
+            S_D_vin = S_cross.conj().T @ (D_mol.conj().T @ vin[nmo+n3b:])
+            vout_dip_2, cnorm, icode = _apply_symm_XH(S_D_vin.ravel(), c, Sx, Sy, Sz,
+                                                      S_cross, max_order, tol)
+            assert icode == 0, \
+                'Code 5. The application of X^H on vin is not converged, try decreasing ' + \
+                f'tol or increasing max_order. Correction norm = {cnorm:.6e}'
+
+            #==== Output with dipole ====#
+            vout += (vout_dip_1-vout_dip_2).ravel()
+
+        return vout
     #--------------------------------------------------------
 
     #--------------------------------------------------------
@@ -1267,6 +1324,12 @@ def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
     T_mol_ao = mol.intor('int1e_kin_sph')
     V_mol_ao = mol.intor('int1e_nuc_sph')
     h1e_mol = cf.T @ (T_mol_ao + V_mol_ao) @ cf
+    if efield is not None:
+        D_mol_ao = np.einsum('d, dij -> ij', efield, mol.intor('int1e_r_sph'))
+        D_mol = cf.T @ D_mol_ao @ cf
+    else:
+        D_mol = None
+
 
     print('here1', flush=True)
 
@@ -1291,12 +1354,21 @@ def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
         g2e_kbbb = aopw_xa.int_2e(mol, pw_k, set(['kbbb']), pw_norm=1/norm)
         sortid = aopw_xa.sort_kbbb(g2e_kbbb, nao)
         g2e_kbbb = [g2e_kbbb[i] for i in sortid]
+        if efield is not None:
+            D_cross_ao = np.einsum('d, dij -> ij', efield,
+                                   aopw_xa.ao_pw_dipole(mol, pw_k) / norm,
+                                   optimize=True)
     elif INTS_ALGO == 'xn':
         with aopw_xn.prepare(mol) as opt:
             S_cross_ao = aopw_xn.ovlp(mol, pw_k, opt=opt).T / norm
             T_cross_ao = aopw_xn.kin(mol, pw_k, opt=opt).T / norm
             V_cross_ao = aopw_xn.nuc(mol, pw_k, opt=opt).T / norm
             bkbb = aopw_xn.gpgg(mol, pw_k, opt=opt)
+            if efield is not None:
+                #vv aopw_xn.dipole returns (nk,3,nao) while we want (3,nao,nk).
+                D_cross_ao = np.einsum('d, dij -> ij', efield,
+                                       aopw_xn.dipole(mol, pw_k, opt=opt).transpose(1,2,0) / norm,
+                                       optimize=True)
             
         g2e_kbbb = []
         for k in range(nk):
@@ -1311,6 +1383,10 @@ def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
     #==== Calculate MO-PW 1e matrices ====#
     S_cross = cf.T @ S_cross_ao
     h1e_cross = cf.T @ (T_cross_ao + V_cross_ao)
+    if efield is not None:
+        D_cross = cf.T @ D_cross_ao
+    else:
+        D_cross = None
 
 
     #==== Calculate MO-PW 2e (mm|mk) matrices from (ka|aa) ====#
@@ -1337,11 +1413,11 @@ def get_effective_tpw_e(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
     apply_G = partial(_apply_G,
                       Sx=Sx, Sy=Sy, Sz=Sz, S_cross=S_cross, h1e_mol=h1e_mol, 
                       h1e_cross=h1e_cross, g2e_mmmm=g2e_mmmm, g2e_mmmk=g2e_mmmk, c=cc,
-                      max_order=max_order, tol=tol)
+                      D_mol=D_mol, D_cross=D_cross, max_order=max_order, tol=tol)
     apply_GH = partial(_apply_GH,
                        Sx=Sx, Sy=Sy, Sz=Sz, S_cross=S_cross, h1e_mol=h1e_mol, 
                        h1e_cross=h1e_cross, g2e_mmmm=g2e_mmmm, g2e_mmmk=g2e_mmmk, c=cc,
-                       max_order=max_order, tol=tol)
+                       D_mol=D_mol, D_cross=D_cross, max_order=max_order, tol=tol)
 
     
     print('here6', flush=True)
@@ -1632,7 +1708,7 @@ def eval_tpw_3d(pos, kvec, xlim, ylim, zlim, w):
 
 
 #====================================================#
-def print_line(fname, kp_coeff, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_ax,
+def print_line(fname, coef, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_ax,
                line_grids, x1, x2):
 
     ax = np.array(['x', 'y', 'z'])
@@ -1660,9 +1736,9 @@ def print_line(fname, kp_coeff, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_a
     
             ao = mol.eval_gto('GTOval_sph', np.atleast_2d(pos))
             bfun[:nmo] = ao.dot(mo_coeff)
-            wfn_mo = np.dot(kp_coeff[:nmo], bfun[:nmo])
+            wfn_mo = np.dot(coef[:nmo], bfun[:nmo])
             bfun[nmo:] = eval_tpw_3d(pos, pw_k, xlim, ylim, zlim, w)
-            wfn_k = np.dot(kp_coeff[nmo:], bfun[nmo:])
+            wfn_k = np.dot(coef[nmo:], bfun[nmo:])
 
             fn.write(f'{" ":1s}  {i:6d}  {grid:14.6e}  {wfn_mo.real:15.6e}  {wfn_mo.imag:15.6e}' +
                      f'  {wfn_k.real:15.6e}  {wfn_k.imag:15.6e}\n')
@@ -1671,8 +1747,8 @@ def print_line(fname, kp_coeff, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_a
 #====================================================#
 
 
-##====================================================#
-def print_plane(fname, kp_coeff, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_plane,
+#====================================================#
+def print_plane(fname, coef, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_plane,
                 line_grids_x0, line_grids_x1, x2):
     '''
     eval_plane :
@@ -1720,9 +1796,9 @@ def print_plane(fname, kp_coeff, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_
         
                 ao = mol.eval_gto('GTOval_sph', np.atleast_2d(pos))
                 bfun[:nmo] = ao.dot(mo_coeff)
-                wfn_mo = np.dot(kp_coeff[:nmo], bfun[:nmo])
+                wfn_mo = np.dot(coef[:nmo], bfun[:nmo])
                 bfun[nmo:] = eval_tpw_3d(pos, pw_k, xlim, ylim, zlim, w)
-                wfn_k = np.dot(kp_coeff[nmo:], bfun[nmo:])
+                wfn_k = np.dot(coef[nmo:], bfun[nmo:])
 
                 fn.write(f'{" ":1s}  {i:6d}  {grid0:14.6e}  {grid1:14.6e}  {wfn_mo.real:15.6e}' +
                          f'  {wfn_mo.imag:15.6e}  {wfn_k.real:15.6e}  {wfn_k.imag:15.6e}\n')
@@ -1730,4 +1806,4 @@ def print_plane(fname, kp_coeff, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_
             fn.write('\n')
 
     return
-##====================================================#
+#====================================================#
