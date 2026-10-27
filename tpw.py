@@ -55,6 +55,31 @@ def get_phase_ref(v, tol=1E-13):
 
 
 #============================================================
+def mvmul_block(vin, amol, across, atpw:tuple):
+
+    nmo = amol.shape[1]
+
+    vout1 = amol @ vin[:nmo]
+    vout1 += across @ vin[nmo:]
+
+    vout2 = across.conj().T @ vin[:nmo]
+    vout2 += apply_3kron(atpw[0], atpw[1], atpw[2], vin[nmo:])
+    
+    return np.hstack((vout1.ravel(), vout2.ravel()))
+#============================================================
+
+
+#============================================================
+def expec_block(cf, amol, across, atpw:tuple):
+    expec = np.zeros(cf.shape[1], dtype=complex)
+    for i in range(cf.shape[1]):
+        expec[i] = np.vdot(cf[:,i], mvmul_block(cf[:,i], amol, across, atpw))
+
+    return expec
+#============================================================
+
+
+#============================================================
 def ovlp_tpw_1d(kvec, xl, xr, w):
     '''
     Calculates the overlap integral matrix among 1D tapered PWs.
@@ -73,7 +98,7 @@ def ovlp_tpw_1d(kvec, xl, xr, w):
       axis.
     '''
     
-    norm = xr - xl + 2*w
+    normsq = xr - xl + 2*w
     Sreg = np.zeros((3, len(kvec), len(kvec)), dtype=complex)
     for i, k1 in enumerate(kvec):
         for j, k2 in enumerate(kvec[:i+1]):
@@ -90,7 +115,7 @@ def ovlp_tpw_1d(kvec, xl, xr, w):
             else:
                 Sreg[1][i,i] = xr - xl
 
-    return Sreg / norm
+    return Sreg / normsq
 #============================================================
 
 
@@ -329,8 +354,8 @@ def get_kin_tpw_cart(kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None,
     w:
       The 1/e width of the exponential tails of the tPWs.
     Sx, Sy, Sz:
-      The overlap matrices among the x, y, and z parts of the tPWs, respectively.
-      They can be calculated using ovlp_tpw_1d.
+      The region-resolved overlap matrices among the x, y, and z parts of the tPWs, 
+      respectively. They can be calculated using ovlp_tpw_1d.
 
     Returns:
       The kinetic energy matrices among tPWs. The shape is (3,npw,npw), with
@@ -373,8 +398,8 @@ def get_kin_tpw(kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None, Sz=N
     w:
       The 1/e width of the exponential tails of the tPWs.
     Sx, Sy, Sz:
-      The overlap matrices among the x, y, and z parts of the tPWs, respectively.
-      They can be calculated using ovlp_tpw_1d.
+      The region-resolved overlap matrices among the x, y, and z parts of the tPWs, 
+      respectively. They can be calculated using ovlp_tpw_1d.
 
     Returns:
       The kinetic energy matrix among tPWs.
@@ -403,8 +428,8 @@ def get_kin_cart(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None
       MO coefficients, if provided, the AO parts of the matrix are transformed into
       its MO representation.
     Sx, Sy, Sz:
-      The overlap matrices among the x, y, and z parts of the tPWs, respectively.
-      They can be calculated using ovlp_tpw_1d.
+      The region-resolved overlap matrices among the x, y, and z parts of the tPWs,
+      respectively. They can be calculated using ovlp_tpw_1d.
 
     Return:
       The kinetic energy matrices among AOs+tPWs. The shape is (3,nao+npw,nao+npw),
@@ -1113,6 +1138,10 @@ def get_effective_tpw_mv(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
 
         '''
         Apply E on a vector where E = S_proj_norm - I.
+
+        Sx, Sy, Sz:
+          The region-summed overlap matrices among the x, y, and z parts of the tPWs,
+          respectively. They can be calculated using ovlp_tpw_1d.
         '''
 
         Sx_diag = np.diag(Sx)
@@ -1140,7 +1169,8 @@ def get_effective_tpw_mv(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
         S_cross:
           <F_m|P_k> where F_m is an MO.
         Sx, Sy, Sz:
-          The x, y, and z parts of the overlap between tPWs, respectively.
+          The region-summed overlap matrices among the x, y, and z parts of the tPWs,
+          respectively. They can be calculated using ovlp_tpw_1d.
         '''
 
         icode = 1
@@ -1171,6 +1201,11 @@ def get_effective_tpw_mv(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
     #--------------------------------------------------------
     def _apply_G(vin, Sx, Sy, Sz, S_cross, h1e_mol, h1e_cross, g2e_mmmm, g2e_mmmk, c, 
                  D_mol=None, D_cross=None, max_order=10, tol=1E-10):
+        '''
+        Sx, Sy, Sz:
+          The region-summed overlap matrices among the x, y, and z parts of the tPWs,
+          respectively. They can be calculated using ovlp_tpw_1d.
+        '''
 
         assert len(vin) == h1e_cross.shape[1], \
             f'The length of input vector, {len(vin)}, to _apply_G must be equal to ' + \
@@ -1208,6 +1243,11 @@ def get_effective_tpw_mv(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
     #--------------------------------------------------------
     def _apply_GH(vin, Sx, Sy, Sz, S_cross, h1e_mol, h1e_cross, g2e_mmmm, g2e_mmmk, c, 
                   D_mol=None, D_cross=None, max_order=10, tol=1E-10):
+        '''
+        Sx, Sy, Sz:
+          The region-summed overlap matrices among the x, y, and z parts of the tPWs,
+          respectively. They can be calculated using ovlp_tpw_1d.
+        '''
 
         nmo = h1e_cross.shape[0]
         n3b = g2e_mmmk.shape[0]
@@ -1311,6 +1351,10 @@ def get_effective_tpw_mv(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
     Volume = (xlim[1]-xlim[0]+2*w) * (ylim[1]-ylim[0]+2*w) * (zlim[1]-zlim[0]+2*w)
     norm = np.sqrt(Volume)
     nao, nmo = cf.shape
+    if efield is not None:
+        ndip = nmo
+    else:
+        ndip = 0
     pw_k = assemble_ks(kxvec, kyvec, kzvec)
     nk = len(pw_k)
     assert nsv <= nk, \
@@ -1424,11 +1468,11 @@ def get_effective_tpw_mv(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
 
     
     #==== Ensure adjointness between G and G^H ====#
-    adjoint_err = check_adjoint(apply_G, apply_GH, m=nmo+n3b, n=nk)
+    adjoint_err = check_adjoint(apply_G, apply_GH, m=nmo+n3b+ndip, n=nk)
 
     
     #==== Solve the iterative SVD ====#
-    Aop = LinearOperator(shape=(nmo+n3b, nk), matvec=apply_G, rmatvec=apply_GH, dtype=complex)
+    Aop = LinearOperator(shape=(nmo+n3b+ndip, nk), matvec=apply_G, rmatvec=apply_GH, dtype=complex)
     _, sv, Vh = svds(Aop, k=nsv, which="LM", solver="propack", return_singular_vectors="vh",
                      tol=1e-8)
     
@@ -1495,17 +1539,83 @@ def compare_pyscf(mol, cf, pw_k):
 
 
 #============================================================
-def analyze(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf, e_proj=None, d_ortho=None,
-            e_ortho=None, d_eff=None, e_eff=None, sv=None, nk_tpw=None, nk_proj=None,
-            nk_ortho=None, nk_eff=None):
+def analyze(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf, mv=True, **kwargs):
+    '''
+    **kwargs accepts dictionaries of the form
+      pw = {'e':np.ndarray, 'd':np.ndarray, 'sv':np.ndarray, 'nk':integer}
+    where the 'e' and 'd' keys are mandatory.
+    '''
+    
 
     #--------------------------------------------------------
-    def _print_orthonormal(ovlp):
+    def _print_ortho_tpw(Sx, Sy, Sz, check_ods):
+
+
+        S_diag = np.kron(np.diag(Sx), np.kron(np.diag(Sy), np.diag(Sz)))
+        ds = np.sum(S_diag)
+        print('    Sum of diagonals = (%.10e, %.10ej)' % (ds.real, ds.imag), flush=True)
+        
+        if check_ods:
+            row_shapes = (Sx.shape[0], Sy.shape[0], Sz.shape[0])
+            col_shapes = (Sx.shape[1], Sy.shape[1], Sz.shape[1])
+            
+            max_offdiag = 0.0
+            nk = Sx.shape[1] * Sy.shape[1] * Sz.shape[1] 
+            for i in range(nk):
+                ix, iy, iz = np.unravel_index(i, row_shapes)
+                for j in range(nk):
+                    jx, jy, jz = np.unravel_index(j, col_shapes)
+            
+                    if i > j:
+                        ods0 = Sx[ix,jx] * Sy[iy,jy] * Sz[iz,jz]
+                        if np.abs(ods0) > max_offdiag:
+                            max_offdiag = np.abs(ods0)
+                            ods = ods0
+
+            pm = "\N{PLUS-MINUS SIGN}"
+            print('    Max. absolute of off-diagonals = (%.10e, %s%.10ej)' %
+                  (ods.real, pm, abs(ods.imag)), flush=True)
+            
+        return 
+    #--------------------------------------------------------
+    
+    #--------------------------------------------------------
+    def _print_ortho(ovlp, check_ods):
         ds = np.sum(np.diag(ovlp))
-        ods = np.sum(ovlp) - ds
-        print('    Sum of diagonals = (%.10e, %.10ej)' % (ds.real, ds.imag))
-        print('    Sum of off-diagonals = (%.10e, %.10ej)' % (ods.real, ods.imag))
+        print('    Sum of diagonals = (%.10e, %.10ej)' % (ds.real, ds.imag), flush=True)
+
+        if check_ods:
+            irow, icol = np.tril_indices_from(ovlp, k=-1)
+            max_idx = np.argmax(np.abs( ovlp[irow,icol] ))
+            irow_max = irow[max_idx]
+            icol_max = icol[max_idx]
+            ods = ovlp[irow_max, icol_max]
+            pm = "\N{PLUS-MINUS SIGN}"
+            print('    Max. absolute of off-diagonals = (%.10e, %s%.10ej)' %
+                  (ods.real, pm, abs(ods.imag)), flush=True)
+            
         return
+    #--------------------------------------------------------
+
+    #--------------------------------------------------------
+    def _print_ortho_gen(cf_b, S_mol, S_cross, S_tpw:tuple):
+        nb = cf_b.shape[1]
+
+        ds = complex(0.0, 0.0)
+        max_offdiag = 0.0
+        for j in range(nb):       # loop over columns of the overlaps of cf_b
+            Av = mvmul_block(cf_b[:,j], S_mol, S_cross, S_tpw)
+            ds += np.vdot(cf_b[:,j], Av)
+            for i in range(j):           # loop over rows of the overlaps of cf_b
+                ods0 = np.vdot(cf_b[:,i], Av)
+                if np.abs(ods0) > max_offdiag:
+                    max_offdiag = np.abs(ods0)
+                    ods = ods0
+
+        pm = "\N{PLUS-MINUS SIGN}"
+        print('    Sum of diagonals = (%.10e, %.10ej)' % (ds.real, ds.imag))
+        print('    Max. absolute of off-diagonals = (%.10e, %s%.10ej)' % (ods.real, pm, abs(ods.imag)))
+        return 
     #--------------------------------------------------------
 
     #--------------------------------------------------------
@@ -1560,7 +1670,9 @@ def analyze(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf, e_proj=None, d_or
     #--------------------------------------------------------
 
 
+    print('Using matrix-vector algorithm?', ('Yes' if mv else 'No'), flush=True)
 
+    
     Volume = (xlim[1]-xlim[0]+2*w) * (ylim[1]-ylim[0]+2*w) * (zlim[1]-zlim[0]+2*w)
     nao, nmo = cf.shape
     nk = len(kxvec) * len(kyvec) * len(kzvec)
@@ -1579,97 +1691,142 @@ def analyze(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf, e_proj=None, d_or
 
     
     #==== Get the necessary operators ====#
-    S = get_ovlp(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf=cf)
-    P = get_momentum(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf=cf)
-    Sx = ovlp_tpw_1d(kxvec, xlim[0], xlim[1], w)
-    Sy = ovlp_tpw_1d(kyvec, ylim[0], ylim[1], w)
-    Sz = ovlp_tpw_1d(kzvec, zlim[0], zlim[1], w)
-    P2 = 2 * get_kin_cart(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=Sx, Sy=Sy, Sz=Sz,
-                          cf=cf)
-    T = get_kin(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=Sx, Sy=Sy, Sz=Sz, cf=cf)
+    Sregx = ovlp_tpw_1d(kxvec, xlim[0], xlim[1], w)
+    Sregy = ovlp_tpw_1d(kyvec, ylim[0], ylim[1], w)
+    Sregz = ovlp_tpw_1d(kzvec, zlim[0], zlim[1], w)
+    Sreg = (Sregx, Sregy, Sregz)
+    kvec = (kxvec, kyvec, kzvec)
+    pw_k = assemble_ks(kxvec, kyvec, kzvec)
+    if mv:
+        #==== Overlap matrix ====#
+        S_mol = mol.intor('int1e_ovlp_sph')
+        S_cross = get_ovlp_cross(mol, pw_k, xlim, ylim, zlim, w)
+        Sx = np.sum(Sregx, axis=0)
+        Sy = np.sum(Sregy, axis=0)
+        Sz = np.sum(Sregz, axis=0)
+        S_tpw = (Sx, Sy, Sz)
+
+        #==== P matrices ====#
+        P_mol = -1j * mol.intor('int1e_ipovlp')
+        P_cross = get_momentum_cross(mol, pw_k, xlim, ylim, zlim, w)
+        P_tpw = [None] * 3
+        for icart in range(3):    # Loop over the Cartesian components of P
+            kf = [np.ones((len(kvec[i]), len(kvec[i]))) for i in range(3)]
+            kf0 = np.outer(np.ones(len(kvec[icart])), kvec[icart])
+            kf[icart] = (kf0 + kf0.T) / 2
+            P_tpw[icart] = (kf[0]*Sx, kf[1]*Sy, kf[2]*Sz)
+        P_tpw = tuple(P_tpw)
+        #^^ P_tpw is a tuple of tuples. The first level corresponds to the Cartesian components
+        # of P: Px, Py, and Pz. The second level corresponds to the Cartesian factors needed to
+        # build the corresponding first-level matrix.
+
+        #==== P^2 matrices ====#
+        P2_mol = - np.array( [mol.intor('int1e_ipipovlp', comp=9).reshape(3,3,nao,nao)[i,i,:,:]
+                              for i in range(3)] )
+        P2_cross = 2 * get_kin_cross_cart(mol, pw_k, xlim, ylim, zlim, w)
+        P2_tpw = [None] * 3
+        for icart in range(3):    # Loop over the Cartesian components of P
+            P2_tpw0 = [Sx, Sy, Sz]
+            P2_tpw0[icart] = 2 * kin_tpw_1d(kvec[icart], w, Sreg=Sreg[icart])
+            P2_tpw[icart] = tuple(P2_tpw0)
+        P2_tpw = tuple(P2_tpw)
+        #^^ P_tpw is a tuple of tuples. See the above comment about P_tpw.
+
+        #==== AO to MO transformation ====#
+        #vv transform the *_mol and *_cross matrices above from AO to MO rep.
+        for M in (S_mol, P_mol[0], P_mol[1], P_mol[2], P2_mol[0], P2_mol[1], P2_mol[2]):
+            M[:] = cf.T @ M @ cf     # [:] enables in-place modification
+        for M in (S_cross, P_cross[0], P_cross[1], P_cross[2], P2_cross[0], P2_cross[1],
+                  P2_cross[2]):
+            M[:] = cf.T @ M         # [:] enables in-place modification
+        
+    else:
+        S = get_ovlp(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf=cf)
+        P = get_momentum(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf=cf)
+        P2 = 2 * get_kin_cart(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=Sregx, 
+                              Sy=Sregy, Sz=Sregz, cf=cf)
+        T = get_kin(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=Sregx, Sy=Sregy, 
+                    Sz=Sregz, cf=cf)
+        
     
     
     #==== II Orthonormality checks ====#
-    print('\nI.1 Orthonormality checks of tapered PWs:')
-    _print_orthonormal(S[nmo:,nmo:])
+    print('\nI.1 Orthonormality checks of tapered PWs:', flush=True)
+    if mv:
+        _print_ortho_tpw(Sx, Sy, Sz, nk<=1000)
+    else:
+        _print_ortho(S[nmo:,nmo:], nk<=1000)
 
-    if e_proj is not None:
-        cf_proj = np.vstack((e_proj, np.eye(nk, dtype=complex)))
-        S_proj = np.einsum('ij,ik,kl->jl', cf_proj.conj(), S, cf_proj, optimize=True)
-        print('\nI.2 Orthonormality checks of projected tPWs:')
-        _print_orthonormal(S_proj)
+    i = 2
+    for key, val in kwargs.items():
+        cf_b = np.vstack((val['e'], val['d']))
+        print(f'\nI.{i:d} Orthonormality checks of {key}:', flush=True)
+        if mv:
+            _print_ortho_gen(cf_b, S_mol, S_cross, (Sx,Sy,Sz))
+        else:
+            S_b = np.einsum('ij,ik,kl->jl', cf_b.conj(), S, cf_b, optimize=True)
+            _print_ortho(S_b, nk<=1000)
+        i += 1
 
-    if d_ortho is not None and e_ortho is not None:
-        cf_ortho = np.vstack((e_ortho, d_ortho))
-        S_ortho = np.einsum('ij,ik,kl->jl', cf_ortho.conj(), S, cf_ortho, optimize=True)
-        print('\nI.3 Orthonormality checks of orthogonalized PWs:')
-        _print_orthonormal(S_ortho)
-
-    if d_eff is not None and e_eff is not None:
-        cf_eff = np.vstack((e_eff, d_eff))
-        S_eff = np.einsum('ij,ik,kl->jl', cf_eff.conj(), S, cf_eff, optimize=True)
-        print('\nI.4 Orthonormality checks of effective PWs:')
-        _print_orthonormal(S_eff)
-
+        
+    #==== II.1.1 <P> and sigma(P) of tPWs ====#
+    if mv:
+        P_expec_tpw = np.zeros((nk,3), dtype=complex)
+        P2_expec_tpw = np.zeros((nk,3), dtype=complex)
+        for icart in range(3):
+            P_tpw0 = P_tpw[icart]   # P_tpw0 is a tuple of Cartesian factors.
+            P_diags = [np.diag(P_tpw0[i]) for i in range(3)]
+            P_expec_tpw[:,icart] = np.kron(P_diags[0], np.kron(P_diags[1], P_diags[2]))
     
-    #==== II.1 <P> and sigma(P) of tPWs ====#
-    P_expec_tpw = np.diagonal(P, axis1=1, axis2=2).T[nmo:,:]
-    P2_expec_tpw = np.diagonal(P2, axis1=1, axis2=2).T[nmo:,:]
-    print('\nII.1 Momentum expectation values and std. deviations of tapered PWs:')
-    nk_tpw = nk if nk_tpw is None else min(nk,nk_tpw)
-    _print_ptable(P_expec_tpw, P2_expec_tpw, nk_tpw)
+            P2_tpw0 = P2_tpw[icart]   # P2_tpw0 is a tuple of Cartesian factors.
+            P2_diags = [np.diag(P2_tpw0[i]) for i in range(3)]
+            P2_expec_tpw[:,icart] = np.kron(P2_diags[0], np.kron(P2_diags[1], P2_diags[2]))
+    else:
+        P_expec_tpw = np.diagonal(P, axis1=1, axis2=2).T[nmo:,:]
+        P2_expec_tpw = np.diagonal(P2, axis1=1, axis2=2).T[nmo:,:]
+
+    print('\nII.1.1 Momentum expectation values and std. deviations of tapered PWs:', flush=True)
+    nk_print = min(val.get('nk', nk), nk)
+    _print_ptable(P_expec_tpw, P2_expec_tpw, nk_print)
+
+    #==== II.1.2 <T> of tPWs ====#
+    if mv:
+        T_expec_tpw = np.sum(P2_expec_tpw, axis=1) / 2
+    else:
+        T_expec_tpw = np.diag(T)[nmo:]
+    print('\nII.1.2 Kinetic energy expectation values of tapered PWs:', flush=True)
+    _print_ttable(T_expec_tpw, nk_print)
+
     
     #==== II.2 <P> and sigma(P) of projected tPWs ====#
-    if e_proj is not None:
-        proj_norm = np.sqrt( np.diag(S_proj).copy().real )
-        P_expec_proj = np.einsum('ij,dik,kj,j->jd', cf_proj.conj(), P, cf_proj, 1/proj_norm**2,
+    i = 2
+    for key, val in kwargs.items():
+        cf_b = np.vstack((val['e'], val['d']))        
+        if mv:
+            normsq = expec_block(cf_b, S_mol, S_cross, S_tpw).real
+            P_expec = np.zeros((cf_b.shape[1],3), dtype=complex)
+            P2_expec = np.zeros((cf_b.shape[1],3), dtype=complex)
+            for icart in range(3):    # Loop over the Cartesian components of P
+                P_expec[:,icart] = expec_block(cf_b, P_mol[icart], P_cross[icart],
+                                               P_tpw[icart]) / normsq
+                P2_expec[:,icart] = expec_block(cf_b, P2_mol[icart], P2_cross[icart],
+                                                P2_tpw[icart]) / normsq
+        else:
+            normsq = np.einsum('ij,ik,kj->j', cf_b.conj(), S, cf_b, optimize=True).real
+            P_expec = np.einsum('ij,dik,kj,j->jd', cf_b.conj(), P, cf_b, 1/normsq,
+                                optimize=True)
+            P2_expec = np.einsum('ij,dik,kj,j->jd', cf_b.conj(), P2, cf_b, 1/normsq,
                                  optimize=True)
-        P2_expec_proj = np.einsum('ij,dik,kj,j->jd', cf_proj.conj(), P2, cf_proj, 1/proj_norm**2,
-                                  optimize=True)
-        nk_proj = cf_proj.shape[1] if nk_proj is None else min(cf_proj.shape[1],nk_proj)
-        print('\nII.2 Momentum expectation values and std. deviations of projected tPWs:')
-        _print_ptable(P_expec_proj, P2_expec_proj, nk_proj)
+            
+        nk_print = min(val.get('nk', cf_b.shape[1]), cf_b.shape[1])
+        print(f'\nII.{i:d}.1 Momentum expectation values and std. deviations of {key}:',
+              flush=True)
+        _print_ptable(P_expec, P2_expec, nk_print, sv=val.get('sv', None))
+        T_expec = np.sum(P2_expec, axis=1) / 2
+        print(f'\nII.{i:d}.2 Kinetic energy expectation values of {key}:', flush=True)
+        _print_ttable(T_expec, nk_print, sv=val.get('sv', None))    
+        i += 1
     
-    #==== II.3 <P> and sigma(P) of orthogonalized tPWs ====#
-    if d_ortho is not None and e_ortho is not None:
-        P_expec_ortho = np.einsum('ij,dik,kj->jd', cf_ortho.conj(), P, cf_ortho, optimize=True)
-        P2_expec_ortho = np.einsum('ij,dik,kj->jd', cf_ortho.conj(), P2, cf_ortho, optimize=True)
-        nk_ortho = cf_ortho.shape[1] if nk_ortho is None else min(cf_ortho.shape[1],nk_ortho)
-        print('\nII.3 Momentum expectation values and std. deviations of orthogonalized tPWs:')
-        _print_ptable(P_expec_ortho, P2_expec_ortho, nk_ortho)
-
-    #==== II.4 <P> and sigma(P) of effective tPWs ====#
-    if d_eff is not None and e_eff is not None:
-        P_expec_eff = np.einsum('ij,dik,kj->jd', cf_eff.conj(), P, cf_eff, optimize=True)
-        P2_expec_eff = np.einsum('ij,dik,kj->jd', cf_eff.conj(), P2, cf_eff, optimize=True)
-        nk_eff = cf_eff.shape[1] if nk_eff is None else min(cf_eff.shape[1],nk_eff)
-        print('\nII.4 Momentum expectation values and std. deviations of effective tPWs:')
-        _print_ptable(P_expec_eff, P2_expec_eff, nk_eff, sv=sv)
-
-    
-    #==== III.1 <T> of tPWs ====#
-    T_expec_tpw = np.diag(T)[nmo:]
-    print('\nIII.1 Kinetic energy expectation values of tapered PWs:')
-    _print_ttable(T_expec_tpw, nk_tpw)
-    
-    #==== III.2 <T> of projected tPWs ====#
-    if e_proj is not None:
-        T_expec_proj = np.einsum('ij,ik,kj->j', cf_proj.conj(), T, cf_proj, optimize=True) / \
-            proj_norm**2
-        print('\nIII.2 Kinetic energy expectation values of projected tPWs:')
-        _print_ttable(T_expec_proj, nk_proj)
-    
-    #==== III.3 <T> of orthogonalized tPWs ====#
-    if d_ortho is not None and e_ortho is not None:
-        T_expec_ortho = np.einsum('ij,ik,kj->j', cf_ortho.conj(), T, cf_ortho, optimize=True)
-        print('\nIII.3 Kinetic energy expectation values of orthogonalized tPWs:')
-        _print_ttable(T_expec_ortho, nk_ortho)
-
-    #==== III.4 <T> of effective tPWs ====#
-    if d_eff is not None and e_eff is not None:
-        T_expec_eff = np.einsum('ij,ik,kj->j', cf_eff.conj(), T, cf_eff, optimize=True)
-        print('\nIII.4 Kinetic energy expectation values of effective tPWs:')
-        _print_ttable(T_expec_eff, nk_eff, sv=sv)    
 
     return
 #============================================================
@@ -1691,16 +1848,16 @@ def eval_tpw_1d(x, k, xlim, w):
 
 
 #====================================================#
-def eval_tpw_3d(pos, kvec, xlim, ylim, zlim, w):
+def eval_tpw_3d(pos, pw_k, xlim, ylim, zlim, w):
 
     pos = np.atleast_2d(pos)
-    kvec = np.atleast_2d(kvec)
-    bfun = np.zeros((pos.shape[0], kvec.shape[0]), dtype=complex)
+    pw_k = np.atleast_2d(pw_k)
+    bfun = np.zeros((pos.shape[0], pw_k.shape[0]), dtype=complex)
     for i, pos0 in enumerate(pos):
-        for j, kvec0 in enumerate(kvec):
-            fx = eval_tpw_1d(pos0[0], kvec0[0], xlim, w)
-            fy = eval_tpw_1d(pos0[1], kvec0[1], ylim, w)
-            fz = eval_tpw_1d(pos0[2], kvec0[2], zlim, w)
+        for j, kvec in enumerate(pw_k):
+            fx = eval_tpw_1d(pos0[0], kvec[0], xlim, w)
+            fy = eval_tpw_1d(pos0[1], kvec[1], ylim, w)
+            fz = eval_tpw_1d(pos0[2], kvec[2], zlim, w)
             bfun[i,j] = fx * fy * fz
             
     return bfun
@@ -1708,21 +1865,19 @@ def eval_tpw_3d(pos, kvec, xlim, ylim, zlim, w):
 
 
 #====================================================#
-def print_line(fname, coef, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_ax,
+def print_line(fname, cf_b, mol, cf, pw_k, xlim, ylim, zlim, w, eval_ax,
                line_grids, x1, x2):
 
+    nmo = cf.shape[1]
     ax = np.array(['x', 'y', 'z'])
     assert eval_ax in ax, f'The chosen evaluation axis: {eval_ax} must be a Cartesian axis.'
     ortho = ax[ax!=eval_ax]    # ortho is the plane perpendicular to the print axis.
-    bfun = np.zeros(mo_coeff.shape[1]+pw_k.shape[0], dtype=complex)
+    bfun = np.zeros(cf.shape[1]+pw_k.shape[0], dtype=complex)
 
     with open(fname, 'w') as fn:
         fn.write(f'{"#":1s} x walls = [{xlim[0]:.3f}, {xlim[1]:.3f}], ' +
                  f'y walls = [{ylim[0]:.3f}, {ylim[1]:.3f}], z walls = [{zlim[0]:.3f}, {zlim[1]:.3f}]\n')
         fn.write(f'{"#":1s} Tail width = {w:.3f}\n')
-        fn.write(f'{"#":1s} kx points = [{kxlim[0]:.3f}, {kxlim[1]:.3f}, {Nkx:d}]\n')
-        fn.write(f'{"#":1s} ky points = [{kylim[0]:.3f}, {kylim[1]:.3f}, {Nky:d}]\n')
-        fn.write(f'{"#":1s} kz points = [{kzlim[0]:.3f}, {kzlim[1]:.3f}, {Nkz:d}]\n')
         fn.write(f'{"#":1s} Print axis = {eval_ax} at {ortho[0]} = {x1:.3f} and {ortho[1]} = {x2:.3f}\n')
         #fn.write(f'{"#":1s}  {"No.":6s}  {eval_ax:14s}  {"Real part":14s}  {"Imag part":14s}\n')
         fn.write('#  %6s  %14s  %15s  %15s  %15s  %15s\n'%
@@ -1735,10 +1890,10 @@ def print_line(fname, coef, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_ax,
             pos[ax!=eval_ax] = np.array([x1, x2])
     
             ao = mol.eval_gto('GTOval_sph', np.atleast_2d(pos))
-            bfun[:nmo] = ao.dot(mo_coeff)
-            wfn_mo = np.dot(coef[:nmo], bfun[:nmo])
+            bfun[:nmo] = ao.dot(cf)
+            wfn_mo = np.dot(cf_b[:nmo], bfun[:nmo])
             bfun[nmo:] = eval_tpw_3d(pos, pw_k, xlim, ylim, zlim, w)
-            wfn_k = np.dot(coef[nmo:], bfun[nmo:])
+            wfn_k = np.dot(cf_b[nmo:], bfun[nmo:])
 
             fn.write(f'{" ":1s}  {i:6d}  {grid:14.6e}  {wfn_mo.real:15.6e}  {wfn_mo.imag:15.6e}' +
                      f'  {wfn_k.real:15.6e}  {wfn_k.imag:15.6e}\n')
@@ -1748,7 +1903,7 @@ def print_line(fname, coef, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_ax,
 
 
 #====================================================#
-def print_plane(fname, coef, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_plane,
+def print_plane(fname, cf_b, mol, cf, pw_k, xlim, ylim, zlim, w, eval_plane,
                 line_grids_x0, line_grids_x1, x2):
     '''
     eval_plane :
@@ -1765,6 +1920,7 @@ def print_plane(fname, coef, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_plan
       eval_plane=xz, then x2 is the y coordinate of the evaluation plane.
     '''
 
+    nmo = cf.shape[1]
     ax = np.array(['x', 'y', 'z'])
     eval_plane_l = list(eval_plane)
     assert all([ev in ax for ev in list(eval_plane_l)]), f'The chosen evaluation plane: {eval_plane} ' + \
@@ -1774,15 +1930,12 @@ def print_plane(fname, coef, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_plan
     axis_label = np.array(eval_plane_l + [ortho])
     sortid = np.argsort(axis_label)
 
-    bfun = np.zeros(mo_coeff.shape[1]+pw_k.shape[0], dtype=complex)
+    bfun = np.zeros(cf.shape[1]+pw_k.shape[0], dtype=complex)
 
     with open(fname, 'w') as fn:
         fn.write(f'{"#":1s} x walls = [{xlim[0]:.3f}, {xlim[1]:.3f}], ' +
                  f'y walls = [{ylim[0]:.3f}, {ylim[1]:.3f}], z walls = [{zlim[0]:.3f}, {zlim[1]:.3f}]\n')
         fn.write(f'{"#":1s} Tail width = {w:.3f}\n')
-        fn.write(f'{"#":1s} kx points = [{kxlim[0]:.3f}, {kxlim[1]:.3f}, {Nkx:d}]\n')
-        fn.write(f'{"#":1s} ky points = [{kylim[0]:.3f}, {kylim[1]:.3f}, {Nky:d}]\n')
-        fn.write(f'{"#":1s} kz points = [{kzlim[0]:.3f}, {kzlim[1]:.3f}, {Nkz:d}]\n')
         fn.write(f'{"#":1s} Print plane = {eval_plane} at {ortho} = {x2:.3f}\n')
         #fn.write(f'{"#":1s}  {"No.":6s}  {eval_ax:14s}  {"Real part":14s}  {"Imag part":14s}\n')
         fn.write('#  %6s  %14s  %14s  %15s  %15s  %15s  %15s\n'%
@@ -1795,10 +1948,10 @@ def print_plane(fname, coef, mol, mo_coeff, pw_k, xlim, ylim, zlim, w, eval_plan
                 pos = pos[sortid]
         
                 ao = mol.eval_gto('GTOval_sph', np.atleast_2d(pos))
-                bfun[:nmo] = ao.dot(mo_coeff)
-                wfn_mo = np.dot(coef[:nmo], bfun[:nmo])
+                bfun[:nmo] = ao.dot(cf)
+                wfn_mo = np.dot(cf_b[:nmo], bfun[:nmo])
                 bfun[nmo:] = eval_tpw_3d(pos, pw_k, xlim, ylim, zlim, w)
-                wfn_k = np.dot(coef[nmo:], bfun[nmo:])
+                wfn_k = np.dot(cf_b[nmo:], bfun[nmo:])
 
                 fn.write(f'{" ":1s}  {i:6d}  {grid0:14.6e}  {grid1:14.6e}  {wfn_mo.real:15.6e}' +
                          f'  {wfn_mo.imag:15.6e}  {wfn_k.real:15.6e}  {wfn_k.imag:15.6e}\n')
