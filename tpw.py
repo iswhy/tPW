@@ -1361,7 +1361,7 @@ def get_effective_tpw_mv(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
         'The number of requested effective PWs cannot exceed the number of underlying tPWs.' 
     
 
-    print('here0', flush=True)
+    #print('here0', flush=True)
 
 
     #==== Calculate AO-AO 1e matrices ====#
@@ -1375,7 +1375,7 @@ def get_effective_tpw_mv(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
         D_mol = None
 
 
-    print('here1', flush=True)
+    #print('here1', flush=True)
 
     #==== Calculate MO-MO (mm|mm) matrix ====#
     g2e_mmmm = ao2mo.kernel(mol, cf, intor='int2e_sph', aosym='s2ij')
@@ -1387,7 +1387,7 @@ def get_effective_tpw_mv(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
     # columns are stacked on top of each other to form the first column of the reordered matrix. The
     # remaining columns are reordered accordingly.
 
-    print('here2', flush=True)
+    #print('here2', flush=True)
 
     #==== Calculate AO-PW 1e and 2e matrices ====#
     if INTS_ALGO == 'xa':
@@ -1422,7 +1422,7 @@ def get_effective_tpw_mv(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
                         g2e_kbbb.append(INT2e((nao+k, p, q, r), bkbb[k,p,q,r].conj()/norm))
 
 
-    print('here3', flush=True)
+    #print('here3', flush=True)
 
     #==== Calculate MO-PW 1e matrices ====#
     S_cross = cf.T @ S_cross_ao
@@ -1446,7 +1446,7 @@ def get_effective_tpw_mv(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
     # a particular row corresponds to three-MO index (q,r,s) with q and r running from 0 to nmo-1 and s
     # from 0 to r.
 
-    print('here5: nmo, n3b, nk', nmo, n3b, nk, flush=True)
+    print('nmo, n3b, nk', nmo, n3b, nk, flush=True)
 
 
     #==== Define G and G^H linear operators ====#
@@ -1464,7 +1464,7 @@ def get_effective_tpw_mv(mol, nsv, cf, kxvec, kyvec, kzvec, xlim, ylim, zlim, w,
                        D_mol=D_mol, D_cross=D_cross, max_order=max_order, tol=tol)
 
     
-    print('here6', flush=True)
+    #print('here6', flush=True)
 
     
     #==== Ensure adjointness between G and G^H ====#
