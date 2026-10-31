@@ -1932,31 +1932,50 @@ def print_plane(fname, cf_b, mol, cf, pw_k, xlim, ylim, zlim, w, eval_plane,
 
     bfun = np.zeros(cf.shape[1]+pw_k.shape[0], dtype=complex)
 
-    with open(fname, 'w') as fn:
-        fn.write(f'{"#":1s} x walls = [{xlim[0]:.3f}, {xlim[1]:.3f}], ' +
-                 f'y walls = [{ylim[0]:.3f}, {ylim[1]:.3f}], z walls = [{zlim[0]:.3f}, {zlim[1]:.3f}]\n')
-        fn.write(f'{"#":1s} Tail width = {w:.3f}\n')
-        fn.write(f'{"#":1s} Print plane = {eval_plane} at {ortho} = {x2:.3f}\n')
-        #fn.write(f'{"#":1s}  {"No.":6s}  {eval_ax:14s}  {"Real part":14s}  {"Imag part":14s}\n')
-        fn.write('#  %6s  %14s  %14s  %15s  %15s  %15s  %15s\n'%
-                 ('No', axis_label[0], axis_label[1], 'Real MO part', 'Imag MO part', 'Real k part',
-                  'Imag k part'))
+    #with open(fname, 'w') as fn:
+    #    fn.write(f'{"#":1s} x walls = [{xlim[0]:.3f}, {xlim[1]:.3f}], ' +
+    #             f'y walls = [{ylim[0]:.3f}, {ylim[1]:.3f}], z walls = [{zlim[0]:.3f}, {zlim[1]:.3f}]\n')
+    #    fn.write(f'{"#":1s} Tail width = {w:.3f}\n')
+    #    fn.write(f'{"#":1s} Print plane = {eval_plane} at {ortho} = {x2:.3f}\n')
+    #    #fn.write(f'{"#":1s}  {"No.":6s}  {eval_ax:14s}  {"Real part":14s}  {"Imag part":14s}\n')
+    #    fn.write('#  %6s  %14s  %14s  %15s  %15s  %15s  %15s\n'%
+    #             ('No', axis_label[0], axis_label[1], 'Real MO part', 'Imag MO part', 'Real k part',
+    #              'Imag k part'))
+    #
+    #    for i, grid0 in enumerate(line_grids_x0):
+    #        for j, grid1 in enumerate(line_grids_x1):                
+    #            pos = np.array([grid0, grid1, x2])
+    #            pos = pos[sortid]
+    #    
+    #            ao = mol.eval_gto('GTOval_sph', np.atleast_2d(pos))
+    #            bfun[:nmo] = ao.dot(cf)
+    #            wfn_mo = np.dot(cf_b[:nmo], bfun[:nmo])
+    #            bfun[nmo:] = eval_tpw_3d(pos, pw_k, xlim, ylim, zlim, w)
+    #            wfn_k = np.dot(cf_b[nmo:], bfun[nmo:])
+    #
+    #            fn.write(f'{" ":1s}  {i:6d}  {grid0:14.6e}  {grid1:14.6e}  {wfn_mo.real:15.6e}' +
+    #                     f'  {wfn_mo.imag:15.6e}  {wfn_k.real:15.6e}  {wfn_k.imag:15.6e}\n')
+    #
+    #        fn.write('\n')
 
-        for i, grid0 in enumerate(line_grids_x0):
-            for j, grid1 in enumerate(line_grids_x1):                
-                pos = np.array([grid0, grid1, x2])
-                pos = pos[sortid]
-        
-                ao = mol.eval_gto('GTOval_sph', np.atleast_2d(pos))
-                bfun[:nmo] = ao.dot(cf)
-                wfn_mo = np.dot(cf_b[:nmo], bfun[:nmo])
-                bfun[nmo:] = eval_tpw_3d(pos, pw_k, xlim, ylim, zlim, w)
-                wfn_k = np.dot(cf_b[nmo:], bfun[nmo:])
+    n1 = len(line_grids_x1)
+    bfun = np.zeros((n1,cf.shape[1]+pw_k.shape[0]), dtype=complex)
+    for i, grid0 in enumerate(line_grids_x0):
+        pos = np.hstack((grid0*np.ones((n1,1)), line_grids_x1[:,None], x2*np.ones((n1,1))))
+        pos = pos[:,sortid]
+        time0 = time.time()
+        ao = mol.eval_gto('GTOval_sph', np.atleast_2d(pos))
+        bfun[:,:nmo] = ao @ cf
+        wfn_mo = bfun[:,:nmo] @ cf_b[:nmo]
+        print('MO = %.3f s' % (time.time() - time0), flush=True)
 
-                fn.write(f'{" ":1s}  {i:6d}  {grid0:14.6e}  {grid1:14.6e}  {wfn_mo.real:15.6e}' +
-                         f'  {wfn_mo.imag:15.6e}  {wfn_k.real:15.6e}  {wfn_k.imag:15.6e}\n')
-
-            fn.write('\n')
+        time0 = time.time()
+        bfun[:,nmo:] = eval_tpw_3d(pos, pw_k, xlim, ylim, zlim, w)
+        wfn_k = bfun[:,nmo:] @ cf_b[nmo:]
+        print('tPW = %.3f s' % (time.time() - time0), flush=True)
+        for j, grid1 in enumerate(line_grids_x1):
+            print('  ',i,j, flush=True)
+            
 
     return
 #====================================================#
