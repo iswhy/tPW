@@ -1,6 +1,6 @@
 import math, itertools
 import numpy as np
-import test_vnuc_tpw.approx.approx as approx
+import tPW.approx.approx as approx
 
 
 #===============================================================
@@ -87,6 +87,28 @@ def get_coef_b(ccx, ccy, ccz, tx, ty, tz):
 
 
 #===============================================================
+def get_coeff_LR_cb(c, q, w, xL, xR, N, lbound, ubound):
+    '''
+    Returns:
+    cc:
+      An array with N+1 columns containing Chebyshev coefficients for the small-t part of 
+      E_i(t). It has three rows if q equals zero, otherwise, it has two rows. The first 
+      and second rows correspond to the left and right tail regions. If q equals zero, the
+      third row corresponds to the small-t part of the middle region.
+    '''
+    
+    #cc = np.zeros((2,N+1), dtype=complex)
+    zero_q = abs(q) < 1E-12
+    cc = []
+    cc += [approx.get_coeff_GL_cb(c, q, w, xL, N, lbound, ubound, not zero_q)]
+    cc += [approx.get_coeff_GR_cb(c, q, w, xR, N, lbound, ubound, not zero_q)]
+    if zero_q:
+        cc += [-approx.get_coeff_FLR_q0_cb(c, xL, xR, N, lbound, ubound)]
+    return np.array(cc)
+#===============================================================
+
+
+#===============================================================
 def get_F_approx_pl(c, q, w, wallL, wallR, N, tsmall, tlarge, nu=4):
 
     xwalls = (wallL[0], wallR[0])
@@ -109,24 +131,7 @@ def get_F_approx_pl(c, q, w, wallL, wallR, N, tsmall, tlarge, nu=4):
     #^^ The true upper bound should be an element of tsmall.
     
     
-    def _get_coeff_LR(c_cart, q_cart, xL, xR):
-        '''
-        Returns:
-        cc:
-          An array with N+1 columns containing Chebyshev coefficients for the small-t part of 
-          E_i(t). It has three rows if q equals zero, otherwise, it has two rows. The first 
-          and second rows correspond to the left and right tail regions. If q equals zero, the
-          third row corresponds to the small-t part of the middle region.
-        '''
-        #cc = np.zeros((2,N+1), dtype=complex)
-        zero_q = abs(q_cart) < 1E-12
-        cc = []
-        cc += [approx.get_coeff_GL_cb(c_cart, q_cart, w, xL, N, lbound, ubound, not zero_q)]
-        cc += [approx.get_coeff_GR_cb(c_cart, q_cart, w, xR, N, lbound, ubound, not zero_q)]
-        if zero_q:
-            cc += [-approx.get_coeff_FLR_q0_cb(c_cart, xL, xR, N, lbound, ubound)]
-        return np.array(cc)
-
+    
 
     norm_factor = \
         (wallR[0] - wallL[0] + 2*w) * \
@@ -142,9 +147,9 @@ def get_F_approx_pl(c, q, w, wallL, wallR, N, tsmall, tlarge, nu=4):
     cf_3t = get_sum_ttt(tx, ty, tz)
     
     # x left and right
-    ccx = _get_coeff_LR(c[0], q[0], wallL[0], wallR[0])
-    ccy = _get_coeff_LR(c[1], q[1], wallL[1], wallR[1])
-    ccz = _get_coeff_LR(c[2], q[2], wallL[2], wallR[2])
+    ccx = get_coeff_LR_cb(c[0], q[0], w, wallL[0], wallR[0], N, lbound, ubound)
+    ccy = get_coeff_LR_cb(c[1], q[1], w, wallL[1], wallR[1], N, lbound, ubound)
+    ccz = get_coeff_LR_cb(c[2], q[2], w, wallL[2], wallR[2], N, lbound, ubound)
 
     F_small = np.zeros(len(tsmall), dtype=complex)
     zz = (2 * np.asarray(tsmall[:idu+1]) - lbound - ubound) / (ubound - lbound)
@@ -182,3 +187,190 @@ def get_F_approx_pl(c, q, w, wallL, wallR, N, tsmall, tlarge, nu=4):
     return F_small, F_large
 #===============================================================
 
+
+#===============================================================
+def vnuc_elm_tsmall(Jn, qx0, ccx, qy0, ccy, qz0, ccz, cf_3t):
+
+    '''
+    The zeroness of q_i is taken care of in the number of rows of the cci. If qx0 
+    is True (qx=0), the first three rows of ccx are referenced, otherwise, only 
+    the first two rows are referenced. The same rule applies to qy0 and qz0.
+    '''
+    
+    nccx = 3 if qx0 else 2
+    nccy = 3 if qy0 else 2
+    nccz = 3 if qz0 else 2
+    
+    vnuc = complex(0.0, 0.0)
+    for i in range(nccx):
+        for j in range(nccy):
+            for k in range(nccz):
+            
+                cf_3c = get_ccc(ccx[i,:], ccy[j,:], ccz[k,:])
+                b = cf_3t @ cf_3c
+                vnuc += np.dot(b, Jn[i,j,k,:])
+    
+    return vnuc
+#===============================================================
+
+
+#===============================================================
+def get_gauss_moment(a, b, c, N):
+    #print(a,b,c,N)
+    J = np.zeros(N+1)
+
+    J[0] = np.sqrt(np.pi) / 2 / c
+    if N == 0:
+        return J
+    
+    J[1] = a / 2 / c**2 - b * J[0]
+    if N == 1:
+        return J
+
+    for n in range(2,N+1):
+        J[n] = a*(-b)**(n-1)/2/c**2 - b*J[n-1] + a**2*(n-1)/2/c**2*J[n-2]
+
+    return J
+#===============================================================
+
+
+#===============================================================
+def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=4, nfactor=1.0):
+
+    '''
+    nk:
+      A tuple of three elements, the number of k points in each Cartesian direction.
+    qint:
+      A tuple of three elements, the interval of k points in each Cartesian direction.
+    nM:
+      A tuple of three elements, the dimensions of the circulant matrix.
+    '''
+
+
+    #==== Determine the upperbound for the Chebyshev expansion ====#
+    widths = \
+        (1/abs(c[0]-xlim[0]), 1/abs(c[0]-xlim[1]),
+         1/abs(c[1]-ylim[0]), 1/abs(c[1]-ylim[1]),
+         1/abs(c[2]-zlim[0]), 1/abs(c[2]-zlim[1]))
+    ubound = nu * max(widths)
+
+    
+    scalex = ( (c[0] - xlim[0])**2, (c[0] - xlim[1])**2, 0.0 )
+    scaley = ( (c[1] - ylim[0])**2, (c[1] - ylim[1])**2, 0.0 )
+    scalez = ( (c[2] - zlim[0])**2, (c[2] - zlim[1])**2, 0.0 )
+
+    #==== Build Gaussian moment tensor ====#
+    Jn = np.zeros((3,3,3,N+1))
+    for i in range(3):
+        for j in range(3):
+            for k in range(3):
+
+                exp_scale = scalex[i] + scaley[j] + scalez[k]
+                if any([jj != 2 for jj in (i,j,k)]):
+                    Jn[i,j,k,:] = get_gauss_moment(2/(ubound-lbound), (ubound+lbound)/(ubound-lbound),
+                                                   exp_scale, N)
+                
+
+    c_eye = np.eye(N+1)
+    tx = np.zeros((N+1,N+1))
+    for i in range(N+1):
+        tx[i,:i+1] = np.polynomial.chebyshev.cheb2poly(c_eye[i,:])
+    ty = tx
+    tz = tx
+    cf_3t = get_sum_ttt(tx, ty, tz)
+
+    
+    #---------------------------------
+    def _get_nrow(ii):
+        return 3 if ii==0 else 2
+    #---------------------------------
+
+    
+    # The the first index of the cc arrays (ccx, ccy, and ccz) below runs from the most negative
+    # q value through the most positive q value. If the dependence of cc on q=k2-k1 is viewed as
+    # a matrix whose row and column correspond to k1 and k2, respectively, cc contains the first
+    # row starting from the right-most element to the left-most element, then down along the first
+    # column to the bottom-most element. So, the length of cc is 2*nk-1. For any Cartesian
+    # component below, the following indexing applies:
+    # ---------------------------------------
+    # i (loop)   cc row number        q value
+    # ---------------------------------------
+    #  -(nk-1)               0   -(nk-1)*qint
+    #      ...             ...            ...
+    #       -1          nk - 2          -qint
+    #        0          nk - 1              0
+    #                   nk + 0          +qint
+    #                      ...            ...
+    #                 2*nk - 1   +(nk-1)*qint
+
+    #==== ccx array ====#
+    ccx = np.zeros((2*nk[0]-1, 3, N+1), dtype=complex)
+    for i in range(-(nk[0]-1), 1):
+        ccx[i+(nk[0]-1) , :_get_nrow(i) , :] = get_coeff_LR_cb(c[0], qint[0]*i, w, xlim[0], xlim[1],
+                                                               N, lbound, ubound)
+    ccx[nk[0]: , :2 , :] = np.conj(ccx[nk[0]-2::-1 , :2 , :])
+    ccx_q = np.linspace(-(nk[0]-1)*qint[0], +(nk[0]-1)*qint[0], 2*nk[0]-1)
+
+    #==== ccy array ====#
+    ccy = np.zeros((2*nk[1]-1, 3, N+1), dtype=complex)
+    for i in range(-(nk[1]-1), 1):
+        ccy[i+(nk[1]-1) , :_get_nrow(i) , :] = get_coeff_LR_cb(c[1], qint[1]*i, w, ylim[0], ylim[1],
+                                                               N, lbound, ubound)
+    ccy[nk[1]: , :2 , :] = np.conj(ccy[nk[1]-2::-1 , :2 , :])
+    ccy_q = np.linspace(-(nk[1]-1)*qint[1], +(nk[1]-1)*qint[1], 2*nk[1]-1)
+
+    #==== ccz array ====#
+    ccz = np.zeros((2*nk[2]-1, 3, N+1), dtype=complex)
+    for i in range(-(nk[2]-1), 1):
+        ccz[i+(nk[2]-1) , :_get_nrow(i) , :] = get_coeff_LR_cb(c[2], qint[2]*i, w, zlim[0], zlim[1],
+                                                               N, lbound, ubound)
+    ccz[nk[2]: , :2 , :] = np.conj(ccz[nk[2]-2::-1 , :2 , :])
+    ccz_q = np.linspace(-(nk[2]-1)*qint[2], +(nk[2]-1)*qint[2], 2*nk[2]-1)
+
+
+    #-----------------------------------------
+    def _get_cc_id(i_, nk_, nM_):
+        assert i_ >= 0 and i_ <= nM_-1
+        if i_ <= nk_-1:
+            iq_ = i_ + nk_ - 1
+        elif i_ >= nM_ - nk_ + 1:
+            iq_ = i_ - (nM_ - nk_ + 1)
+        else:
+            iq_ = None          # Padding elements
+        return iq_
+    #-----------------------------------------
+
+
+    
+    #==== Build the 3D circulant tensor ====#
+    Cr = np.zeros(nM, dtype=complex)
+    for i in range(nM[0]):
+        iq = _get_cc_id(i, nk[0], nM[0])
+        zero_qx = abs(ccx_q[iq]) < 1E-12
+        for j in range(nM[1]):
+            jq = _get_cc_id(j, nk[1], nM[1])
+            zero_qy = abs(ccy_q[jq]) < 1E-12
+            print('jj ', i,j, flush=True)
+            for k in range(nM[2]):
+                kq = _get_cc_id(k, nk[2], nM[2])
+                #print(k, kq)
+                zero_qz = abs(ccz_q[kq]) < 1E-12
+
+                if all([idq is not None for idq in (iq,jq,kq)]):
+                    if any([not zero_qx, not zero_qy, not zero_qz]):
+                        q = np.array([ccx_q[iq], ccy_q[jq], ccz_q[kq]])
+                        Cr[i,j,k] = vnuc_elm_tsmall(Jn, zero_qx, ccx[iq,:,:], zero_qy, 
+                                                    ccy[jq,:,:], zero_qz, ccz[kq,:,:], cf_3t)
+                        #Cr[i,j,k] += 2 * np.sqrt(np.pi**3) * np.exp(1j*np.dot(q,c)) / \
+                        #    np.linalg.norm(q)**2
+                        midint = 2 * np.sqrt(np.pi**3) * np.exp(1j*np.dot(q,c)) / np.linalg.norm(q)**2
+                        print(f'ijk: {i}  {j}  {k} | {q[0]:.4f}  {q[1]:.4f}  {q[2]:.4f} |  {midint:.6e}  {Cr[i,j,k]:.6e}', flush=True)
+                        Cr[i,j,k] += midint
+                    else:
+                        Cr[i,j,k] = complex(0.0, 0.0)    # calc_vnuc_elm_q0()
+                        
+                    Cr[i,j,k] *= 2 / np.sqrt(np.pi) / nfactor
+                        
+                    
+    return Cr
+#===============================================================

@@ -212,7 +212,7 @@ def get_ovlp_cross(mol, pw_k, xlim, ylim, zlim, w):
       The k vectors arranged into rows (there are three columns with each row
       corresponding to a particular k vector).
     xlim, ylim, zlim:
-      Each is a tuple of two elements that defines the volume for the pure PW region.
+      Each is a tuple of two elements that defines the volume of the pure PW region.
     w:
       The 1/e width of the exponential tails of the tPWs.
     
@@ -249,7 +249,7 @@ def get_ovlp(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, cf=None):
     kxvec, kyvec, kzvec:
       The x, y, and z components of the k vectors of the tPWs.
     xlim, ylim, zlim:
-      Each is a tuple of two elements that defines the volume for the pure PW region.
+      Each is a tuple of two elements that defines the volume of the pure PW region.
     w:
       The 1/e width of the exponential tails of the tPWs.
     cf:
@@ -293,7 +293,7 @@ def get_kin_cross_cart(mol, pw_k, xlim, ylim, zlim, w):
       The k vectors arranged into rows (there are three columns with each row
       corresponding to a particular k vector).
     xlim, ylim, zlim:
-      Each is a tuple of two elements that defines the volume for the pure PW region.
+      Each is a tuple of two elements that defines the volume of the pure PW region.
     w:
       The 1/e width of the exponential tails of the tPWs.
 
@@ -320,7 +320,7 @@ def get_kin_cross(mol, pw_k, xlim, ylim, zlim, w):
       The k vectors arranged into rows (there are three columns with each row
       corresponding to a particular k vector).
     xlim, ylim, zlim:
-      Each is a tuple of two elements that defines the volume for the pure PW region.
+      Each is a tuple of two elements that defines the volume of the pure PW region.
     w:
       The 1/e width of the exponential tails of the tPWs.
     
@@ -350,7 +350,7 @@ def get_kin_tpw_cart(kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None,
     kxvec, kyvec, kzvec:
       The x, y, and z components of the k vectors of the tPWs.
     xlim, ylim, zlim:
-      Each is a tuple of two elements that defines the volume for the pure PW region.
+      Each is a tuple of two elements that defines the volume of the pure PW region.
     w:
       The 1/e width of the exponential tails of the tPWs.
     Sx, Sy, Sz:
@@ -394,7 +394,7 @@ def get_kin_tpw(kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None, Sz=N
     kxvec, kyvec, kzvec:
       The x, y, and z components of the k vectors of the tPWs.
     xlim, ylim, zlim:
-      Each is a tuple of two elements that defines the volume for the pure PW region.
+      Each is a tuple of two elements that defines the volume of the pure PW region.
     w:
       The 1/e width of the exponential tails of the tPWs.
     Sx, Sy, Sz:
@@ -421,7 +421,7 @@ def get_kin_cart(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None
     kxvec, kyvec, kzvec:
       The x, y, and z components of the k vectors of the tPWs.
     xlim, ylim, zlim:
-      Each is a tuple of two elements that defines the volume for the pure PW region.
+      Each is a tuple of two elements that defines the volume of the pure PW region.
     w:
       The 1/e width of the exponential tails of the tPWs.
     cf:
@@ -469,7 +469,7 @@ def get_kin(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, Sx=None, Sy=None, Sz=
     kxvec, kyvec, kzvec:
       The x, y, and z components of the k vectors of the tPWs.
     xlim, ylim, zlim:
-      Each is a tuple of two elements that defines the volume for the pure PW region.
+      Each is a tuple of two elements that defines the volume of the pure PW region.
     w:
       The 1/e width of the exponential tails of the tPWs.
     cf:
@@ -511,7 +511,7 @@ def get_vnuc_cross(mol, pw_k, xlim, ylim, zlim, w):
       The k vectors arranged into rows (there are three columns with each row
       corresponding to a particular k vector).
     xlim, ylim, zlim:
-      Each is a tuple of two elements that defines the volume for the pure PW region.
+      Each is a tuple of two elements that defines the volume of the pure PW region.
     w:
       The 1/e width of the exponential tails of the tPWs.
     
@@ -538,7 +538,7 @@ def get_vnuc(mol, pw_k, xlim, ylim, zlim, w, cf=None):
     kxvec, kyvec, kzvec:
       The x, y, and z components of the k vectors of the tPWs.
     xlim, ylim, zlim:
-      Each is a tuple of two elements that defines the volume for the pure PW region.
+      Each is a tuple of two elements that defines the volume of the pure PW region.
     w:
       The 1/e width of the exponential tails of the tPWs.
     cf:
@@ -582,7 +582,7 @@ def get_v2e(mol, pw_k, xlim, ylim, zlim, w, types, cf=None):
       The k vectors arranged into rows (there are three columns with each row
       corresponding to a particular k vector).
     xlim, ylim, zlim:
-      Each is a tuple of two elements that defines the volume for the pure PW region.
+      Each is a tuple of two elements that defines the volume of the pure PW region.
     w:
       The 1/e width of the exponential tails of the tPWs.
     cf:
@@ -680,7 +680,7 @@ def get_momentum_cross(mol, pw_k, xlim, ylim, zlim, w):
       The k vectors arranged into rows (there are three columns with each row
       corresponding to a particular k vector).
     xlim, ylim, zlim:
-      Each is a tuple of two elements that defines the volume for the pure PW region.
+      Each is a tuple of two elements that defines the volume of the pure PW region.
     w:
       The 1/e width of the exponential tails of the tPWs.
     
@@ -720,7 +720,7 @@ def get_momentum(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, S_tpw=None, cf=N
     kxvec, kyvec, kzvec:
       The x, y, and z components of the k vectors of the tPWs.
     xlim, ylim, zlim:
-      Each is a tuple of two elements that defines the volume for the pure PW region.
+      Each is a tuple of two elements that defines the volume of the pure PW region.
     w:
       The 1/e width of the exponential tails of the tPWs.
     cf:
@@ -764,7 +764,7 @@ def get_dipole_cross(mol, pw_k, xlim, ylim, zlim, w):
       The k vectors arranged into rows (there are three columns with each row
       corresponding to a particular k vector).
     xlim, ylim, zlim:
-      Each is a tuple of two elements that defines the volume for the pure PW region.
+      Each is a tuple of two elements that defines the volume of the pure PW region.
     w:
       The 1/e width of the exponential tails of the tPWs.
     
