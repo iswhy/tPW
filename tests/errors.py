@@ -1,8 +1,9 @@
+from functools import partial
 import matplotlib.pyplot as plt
 import numpy as np
-import test_vnuc_tpw.approx.approx as approx
-import test_vnuc_tpw.exact.exact as exact
-import test_vnuc_tpw.pwcb.pwcb as pwcb
+import tPW.approx.approx as approx
+import tPW.exact.exact as exact
+import tPW.pwcb.pwcb as pwcb
 
 
 
@@ -179,8 +180,9 @@ yL = -800.0
 yR =  800.0
 zL = -1000.0
 zR =  1000.0
-wexp = 100.0
+wexp = 1.0
 q = np.array([0.0, -0.0, 2.0])
+#q = np.array([1.0, 1.0, 2.0])
 nsmall = 500
 nlarge = 500
 tlast = 10.0
@@ -230,7 +232,8 @@ for i in range(3):
 
 
     #==== Exact data ====#
-    E_small_ex, E_large_ex = exact.calc_E(c[i], q[i], wexp, wallL[i], wallR[i], tsmall, tlarge)
+    E_small_ex = exact.calc_E(tsmall, c[i], wallL[i], wallR[i], wexp, q[i]) / (wallR[i] - wallL[i] + 2*wexp)
+    E_large_ex = exact.calc_E(tlarge, c[i], wallL[i], wallR[i], wexp, q[i]) / (wallR[i] - wallL[i] + 2*wexp)
 
     F_small_ex *= E_small_ex
     F_large_ex *= E_large_ex
@@ -264,7 +267,10 @@ print(f'  - Real part = {np.max( np.abs(error_large.real) ):.8e} \n' +
 
 
 
-F_small_pl, F_large_pl = pwcb.get_F_approx_pl(c, q, wexp, wallL, wallR, Napp, tsmall, tlarge, nu)
+F_small_pl, F_large_pl = pwcb.get_F_approx_pl(c, q, wexp, wallL, wallR, Napp, tsmall, tlarge, nu,
+                                              (wallR[0] - wallL[0] + 2*wexp) * \
+                                              (wallR[1] - wallL[1] + 2*wexp) * \
+                                              (wallR[2] - wallL[2] + 2*wexp))
 plot_data(tsmall, F_small_pl, F_small_ex, tlarge, F_large_pl, F_large_ex, filename="F_pl.pdf",
           figsize=figsize, margins=margins, wspace=0.3, xlim1=xsmall, xlim2=xlarge,
           lb_prev=rf'$F(t)$', title=f'F(t) for q = ({q[0]:.3f}  {q[1]:.3f}  {q[2]:.3f})')
@@ -283,3 +289,24 @@ error_large = F_large_pl - F_large_ex
 print('Maximum errors for the polynomial-approximated large-t part:')
 print(f'  - Real part = {np.max( np.abs(error_large.real) ):.8e} \n' +
       f'  - Imaginary part = {np.max( np.abs(error_large.imag) ):.8e}')
+
+
+
+
+
+#nfactor = (wallR[0] - wallL[0] + 2*wexp) * \
+#    (wallR[1] - wallL[1] + 2*wexp) * \
+#    (wallR[2] - wallL[2] + 2*wexp)
+nfactor = 1.0
+F_small_pl2 = exact.calc_F_tsmall(tsmall, c, (wallL[0], wallR[0]), (wallL[1], wallR[1]), (wallL[2], wallR[2]), wexp, q, nfactor)
+F_large_pl2 = exact.calc_F_tsmall(tlarge, c, (wallL[0], wallR[0]), (wallL[1], wallR[1]), (wallL[2], wallR[2]), wexp, q, nfactor)
+plot_data(tsmall, F_small_pl2, F_small_ex, tlarge, F_large_pl2, F_large_ex, filename="F_pl2.pdf",
+          figsize=figsize, margins=margins, wspace=0.3, xlim1=xsmall, xlim2=xlarge,
+          lb_prev=rf'$F(t)$', title=f'F(t) for q = ({q[0]:.3f}  {q[1]:.3f}  {q[2]:.3f})')
+
+
+_calc_F_tsmall = partial(exact.calc_F_tsmall, c=c, xlim=(wallL[0], wallR[0]),
+                         ylim=(wallL[1], wallR[1]), zlim=(wallL[2], wallR[2]), w=wexp, q=q,
+                         nfactor=nfactor)
+intcheck = pwcb.trapezoidal_integral(_calc_F_tsmall, 0.0, 0.007, 5000)
+print(f'integral = {intcheck:.10e}')

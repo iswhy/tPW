@@ -1,6 +1,9 @@
 import math, itertools
+from functools import partial
 import numpy as np
+from scipy.integrate import tanhsinh
 import tPW.approx.approx as approx
+import tPW.exact.exact as exact
 
 
 #===============================================================
@@ -109,7 +112,7 @@ def get_coeff_LR_cb(c, q, w, xL, xR, N, lbound, ubound):
 
 
 #===============================================================
-def get_F_approx_pl(c, q, w, wallL, wallR, N, tsmall, tlarge, nu=4):
+def get_F_approx_pl(c, q, w, wallL, wallR, N, tsmall, tlarge, nu=4, nfactor=1.0):
 
     xwalls = (wallL[0], wallR[0])
     ywalls = (wallL[1], wallR[1])
@@ -130,14 +133,8 @@ def get_F_approx_pl(c, q, w, wallL, wallR, N, tsmall, tlarge, nu=4):
         ubound = tsmall[-1]
     #^^ The true upper bound should be an element of tsmall.
     
-    
-    
 
-    norm_factor = \
-        (wallR[0] - wallL[0] + 2*w) * \
-        (wallR[1] - wallL[1] + 2*w) * \
-        (wallR[2] - wallL[2] + 2*w)
-
+    
     c_eye = np.eye(N+1)
     tx = np.zeros((N+1,N+1))
     for i in range(N+1):
@@ -176,13 +173,13 @@ def get_F_approx_pl(c, q, w, wallL, wallR, N, tsmall, tlarge, nu=4):
                 exp_factor = np.exp(-tsmall[:idu+1]**2 * exp_scale)
                 F_small[:idu+1] += exp_factor * (zz_powers @ b)
 
-    F_small = F_small / norm_factor
+    F_small = F_small / nfactor
 
 
     
     F_large = np.sqrt(np.pi**3) / tlarge**3 * \
         np.exp(1j*np.dot(q,c) - np.linalg.norm(q)**2/4/tlarge**2)
-    F_large = F_large / norm_factor
+    F_large = F_large / nfactor
 
     return F_small, F_large
 #===============================================================
@@ -235,6 +232,31 @@ def get_gauss_moment(a, b, c, N):
 
 
 #===============================================================
+def trapezoidal_integral(f, a, b, n=1000):
+
+    """
+    Approximates the definite integral of f(x) from a to b using the trapezoidal rule.
+    
+    Parameters:
+        f (callable): The function to integrate.
+        a (float): Lower limit of integration.
+        b (float): Upper limit of integration.
+        n (int): Number of subintervals (default: 1000).
+        
+    Returns:
+        float: The approximated integral.
+    """
+    h = (b - a) / n
+    total = 0.5 * (f(a) + f(b))
+    
+    for i in range(1, n):
+        total += f(a + i * h)
+        
+    return total * h
+#===============================================================
+
+
+#===============================================================
 def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=4, nfactor=1.0):
 
     '''
@@ -268,7 +290,7 @@ def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=
                 exp_scale = scalex[i] + scaley[j] + scalez[k]
                 if any([jj != 2 for jj in (i,j,k)]):
                     Jn[i,j,k,:] = get_gauss_moment(2/(ubound-lbound), (ubound+lbound)/(ubound-lbound),
-                                                   exp_scale, N)
+                                                   np.sqrt(exp_scale), N)
                 
 
     c_eye = np.eye(N+1)
@@ -330,6 +352,10 @@ def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=
 
     #-----------------------------------------
     def _get_cc_id(i_, nk_, nM_):
+        '''
+        Maps an index of the circulant matrix (0 <= i_ <= nM_) to the corresponding index
+        of the cc matrices above (iq_).
+        '''
         assert i_ >= 0 and i_ <= nM_-1
         if i_ <= nk_-1:
             iq_ = i_ + nk_ - 1
@@ -364,7 +390,7 @@ def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=
                         #Cr[i,j,k] += 2 * np.sqrt(np.pi**3) * np.exp(1j*np.dot(q,c)) / \
                         #    np.linalg.norm(q)**2
                         midint = 2 * np.sqrt(np.pi**3) * np.exp(1j*np.dot(q,c)) / np.linalg.norm(q)**2
-                        print(f'ijk: {i}  {j}  {k} | {q[0]:.4f}  {q[1]:.4f}  {q[2]:.4f} |  {midint:.6e}  {Cr[i,j,k]:.6e}', flush=True)
+                        print(f'ijk: {i}  {j}  {k} | {q[0]:.4f}  {q[1]:.4f}  {q[2]:.4f} | {midint:.6e}  {Cr[i,j,k]:.6e}', flush=True)
                         Cr[i,j,k] += midint
                     else:
                         Cr[i,j,k] = complex(0.0, 0.0)    # calc_vnuc_elm_q0()
@@ -374,3 +400,98 @@ def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=
                     
     return Cr
 #===============================================================
+
+    
+#===============================================================
+def calc_vnuc_circulant_ts(c, nk, qint, nM, w, xlim, ylim, zlim, nfactor=1.0):
+
+
+    #---------------------------------
+    def _get_nrow(ii):
+        return 3 if ii==0 else 2
+    #---------------------------------
+
+    
+    # The the first index of the cc arrays (ccx, ccy, and ccz) below runs from the most negative
+    # q value through the most positive q value. If the dependence of cc on q=k2-k1 is viewed as
+    # a matrix whose row and column correspond to k1 and k2, respectively, cc contains the first
+    # row starting from the right-most element to the left-most element, then down along the first
+    # column to the bottom-most element. So, the length of cc is 2*nk-1. For any Cartesian
+    # component below, the following indexing applies:
+    # ---------------------------------------
+    # i (loop)   cc row number        q value
+    # ---------------------------------------
+    #  -(nk-1)               0   -(nk-1)*qint
+    #      ...             ...            ...
+    #       -1          nk - 2          -qint
+    #        0          nk - 1              0
+    #                   nk + 0          +qint
+    #                      ...            ...
+    #                 2*nk - 1   +(nk-1)*qint
+
+    ccx_q = np.linspace(-(nk[0]-1)*qint[0], +(nk[0]-1)*qint[0], 2*nk[0]-1)
+    ccy_q = np.linspace(-(nk[1]-1)*qint[1], +(nk[1]-1)*qint[1], 2*nk[1]-1)
+    ccz_q = np.linspace(-(nk[2]-1)*qint[2], +(nk[2]-1)*qint[2], 2*nk[2]-1)
+
+
+    #-----------------------------------------
+    def _get_cc_id(i_, nk_, nM_):
+        '''
+        Maps an index of the circulant matrix (0 <= i_ <= nM_) to the corresponding index
+        of the cc matrices above (iq_).
+        '''
+        assert i_ >= 0 and i_ <= nM_-1
+        if i_ <= nk_-1:
+            iq_ = i_ + nk_ - 1
+        elif i_ >= nM_ - nk_ + 1:
+            iq_ = i_ - (nM_ - nk_ + 1)
+        else:
+            iq_ = None          # Padding elements
+        return iq_
+    #-----------------------------------------
+
+    #def _calc_F_tsmall(t, qx, qy, qz):
+    #    t = np.squeeze(t)
+    #    return exact.calc_F_tsmall(t, c, xlim, ylim, zlim, w, np.array([qx,qy,qz]))
+    
+    #==== Build the 3D circulant tensor ====#
+    Cr = np.zeros(nM, dtype=complex)
+    for i in range(nM[0]):
+        iq = _get_cc_id(i, nk[0], nM[0])
+        zero_qx = abs(ccx_q[iq]) < 1E-12
+        for j in range(nM[1]):
+            jq = _get_cc_id(j, nk[1], nM[1])
+            zero_qy = abs(ccy_q[jq]) < 1E-12
+            print('jj ', i,j, flush=True)
+            for k in range(nM[2]):
+                kq = _get_cc_id(k, nk[2], nM[2])
+                zero_qz = abs(ccz_q[kq]) < 1E-12
+
+                if all([idq is not None for idq in (iq,jq,kq)]):
+                    if any([not zero_qx, not zero_qy, not zero_qz]):
+                        q = np.array([ccx_q[iq], ccy_q[jq], ccz_q[kq]])
+
+                        _calc_F_tsmall = partial(exact.calc_F_tsmall,
+                                                 c=c, xlim=xlim, ylim=ylim, zlim=zlim, w=w, q=q)
+                        Cr[i,j,k] = tanhsinh(_calc_F_tsmall, 0.0, np.inf, rtol=1e-21,
+                                             atol=1e-21).integral
+                        #Cr[i,j,k] = trapezoidal_integral(_calc_F_tsmall, 0.0, 0.007, 1000)
+
+                        #Cr[i,j,k] = tanhsinh(_calc_F_tsmall, 0.0, np.inf,
+                        #                     args=(c, xlim, ylim, zlim, w, q), rtol=1e-12,
+                        #                     atol=1e-12)
+
+                        #Cr[i,j,k] = tanhsinh(_calc_F_tsmall, 0.0, np.inf,
+                        #                     args=(q[0], q[1], q[2]), rtol=1e-8,
+                        #                     atol=1e-8)
+
+                        midint = 2 * np.sqrt(np.pi**3) * np.exp(1j*np.dot(q,c)) / np.linalg.norm(q)**2
+                        print(f'ref ijk: {i}  {j}  {k} | {q[0]:.4f}  {q[1]:.4f}  {q[2]:.4f} | {midint:.6e}  {Cr[i,j,k]:.6e}', flush=True)
+                        Cr[i,j,k] += midint
+                    else:
+                        Cr[i,j,k] = complex(0.0, 0.0)    # calc_vnuc_elm_q0()
+                        
+                    Cr[i,j,k] *= 2 / np.sqrt(np.pi) / nfactor
+
+    return Cr
+#=====================================================================
