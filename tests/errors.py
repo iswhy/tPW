@@ -180,12 +180,12 @@ yL = -800.0
 yR =  800.0
 zL = -1000.0
 zR =  1000.0
-wexp = 1.0
-q = np.array([0.0, -0.0, 2.0])
+wexp = 10.0
+q = np.array([0.0, -0.0, 0.5])
 #q = np.array([1.0, 1.0, 2.0])
 nsmall = 500
 nlarge = 500
-tlast = 10.0
+tlast = 6.0
 Napp = 15
 expan = 'C'
 
@@ -294,19 +294,20 @@ print(f'  - Real part = {np.max( np.abs(error_large.real) ):.8e} \n' +
 
 
 
-#nfactor = (wallR[0] - wallL[0] + 2*wexp) * \
-#    (wallR[1] - wallL[1] + 2*wexp) * \
-#    (wallR[2] - wallL[2] + 2*wexp)
-nfactor = 1.0
-F_small_pl2 = exact.calc_F_tsmall(tsmall, c, (wallL[0], wallR[0]), (wallL[1], wallR[1]), (wallL[2], wallR[2]), wexp, q, nfactor)
-F_large_pl2 = exact.calc_F_tsmall(tlarge, c, (wallL[0], wallR[0]), (wallL[1], wallR[1]), (wallL[2], wallR[2]), wexp, q, nfactor)
+nfactor = (wallR[0] - wallL[0] + 2*wexp) * \
+    (wallR[1] - wallL[1] + 2*wexp) * \
+    (wallR[2] - wallL[2] + 2*wexp)
+#nfactor = 1.0
+assert np.linalg.norm(q) >= 1E-12, 'The following codes only works on nonzero |q|.'
+F_small_pl2 = exact.calc_F(tsmall, c, (wallL[0], wallR[0]), (wallL[1], wallR[1]), (wallL[2], wallR[2]), wexp, q, True, nfactor)
+F_large_pl2 = exact.calc_F(tlarge, c, (wallL[0], wallR[0]), (wallL[1], wallR[1]), (wallL[2], wallR[2]), wexp, q, True, nfactor)
 plot_data(tsmall, F_small_pl2, F_small_ex, tlarge, F_large_pl2, F_large_ex, filename="F_pl2.pdf",
           figsize=figsize, margins=margins, wspace=0.3, xlim1=xsmall, xlim2=xlarge,
           lb_prev=rf'$F(t)$', title=f'F(t) for q = ({q[0]:.3f}  {q[1]:.3f}  {q[2]:.3f})')
+print('\n !!! WARNING !!! The dashed lines in the large-t portion of F_pl2.pdf is just a dummy small-valued function.\n')
 
-
-_calc_F_tsmall = partial(exact.calc_F_tsmall, c=c, xlim=(wallL[0], wallR[0]),
-                         ylim=(wallL[1], wallR[1]), zlim=(wallL[2], wallR[2]), w=wexp, q=q,
-                         nfactor=nfactor)
-intcheck = pwcb.trapezoidal_integral(_calc_F_tsmall, 0.0, 0.007, 5000)
-print(f'integral = {intcheck:.10e}')
+_calc_F_tsmall = partial(exact.calc_F,
+                         c=c, xlim=(wallL[0], wallR[0]), ylim=(wallL[1], wallR[1]),
+                         zlim=(wallL[2], wallR[2]), w=wexp, q=q, smallt=True, nfactor=nfactor)
+intcheck = 2 / np.sqrt(np.pi) * pwcb.trapezoidal_integral(_calc_F_tsmall, 0.0, 0.005, 5000)
+print(f'Integral of the small-t part = {intcheck:.10e}')

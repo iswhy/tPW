@@ -1,7 +1,7 @@
-import math, itertools
+import math, itertools, time
 from functools import partial
 import numpy as np
-from scipy.integrate import tanhsinh
+from scipy.integrate import quad, tanhsinh
 import tPW.approx.approx as approx
 import tPW.exact.exact as exact
 
@@ -67,6 +67,7 @@ def get_ccc(ccx, ccy, ccz):
     
                 if nx+ny+nz <= N_max and nx <= ny and ny <= nz:
                     sum_list = set(itertools.permutations((nx,ny,nz)))
+                    #test sum_list = [(nx,ny,nz)]
                     for n_trio in sum_list:
                         nx0, ny0, nz0 = n_trio
                         cf_3c[i] += ccx[nx0] * ccy[ny0] * ccz[nz0]
@@ -100,7 +101,6 @@ def get_coeff_LR_cb(c, q, w, xL, xR, N, lbound, ubound):
       third row corresponds to the small-t part of the middle region.
     '''
     
-    #cc = np.zeros((2,N+1), dtype=complex)
     zero_q = abs(q) < 1E-12
     cc = []
     cc += [approx.get_coeff_GL_cb(c, q, w, xL, N, lbound, ubound, not zero_q)]
@@ -143,7 +143,6 @@ def get_F_approx_pl(c, q, w, wallL, wallR, N, tsmall, tlarge, nu=4, nfactor=1.0)
     tz = tx
     cf_3t = get_sum_ttt(tx, ty, tz)
     
-    # x left and right
     ccx = get_coeff_LR_cb(c[0], q[0], w, wallL[0], wallR[0], N, lbound, ubound)
     ccy = get_coeff_LR_cb(c[1], q[1], w, wallL[1], wallR[1], N, lbound, ubound)
     ccz = get_coeff_LR_cb(c[2], q[2], w, wallL[2], wallR[2], N, lbound, ubound)
@@ -168,7 +167,6 @@ def get_F_approx_pl(c, q, w, wallL, wallR, N, tsmall, tlarge, nu=4, nfactor=1.0)
             
                 cf_3c = get_ccc(ccx[i,:], ccy[j,:], ccz[k,:])
                 b = cf_3t @ cf_3c
-                #exp_scale = (c[0]-xwalls[i])**2 + (c[1]-ywalls[j])**2 + (c[2]-zwalls[k])**2
                 exp_scale = scalex[i] + scaley[j] + scalez[k]
                 exp_factor = np.exp(-tsmall[:idu+1]**2 * exp_scale)
                 F_small[:idu+1] += exp_factor * (zz_powers @ b)
@@ -212,8 +210,27 @@ def vnuc_elm_tsmall(Jn, qx0, ccx, qy0, ccy, qz0, ccz, cf_3t):
 
 
 #===============================================================
+def vnuc_elm_q0(c, xlim, ylim, zlim, w, nu=6, atol=1E-10, rtol=1E-10):
+
+    widths = \
+        (1/abs(c[0]-xlim[0]), 1/abs(c[0]-xlim[1]),
+         1/abs(c[1]-ylim[0]), 1/abs(c[1]-ylim[1]),
+         1/abs(c[2]-zlim[0]), 1/abs(c[2]-zlim[1]))
+    ubound = nu * max(widths)
+
+    _calc_F_q0 = partial(exact.calc_F,
+                         c=c, xlim=xlim, ylim=ylim, zlim=zlim, w=w, q=np.zeros(3))
+    result, error_estimate = quad(lambda x: np.real(_calc_F_q0(x)), 0.0, ubound, epsabs=atol,
+                                  epsrel=rtol)
+    result += np.sqrt(np.pi**3) * 1/2 * ubound**2
+    
+    return result
+#===============================================================
+
+
+#===============================================================
 def get_gauss_moment(a, b, c, N):
-    #print(a,b,c,N)
+
     J = np.zeros(N+1)
 
     J[0] = np.sqrt(np.pi) / 2 / c
@@ -257,7 +274,8 @@ def trapezoidal_integral(f, a, b, n=1000):
 
 
 #===============================================================
-def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=4, nfactor=1.0):
+def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=4, nu0=6, nfactor=1.0,
+                        rtol0=1e-10, atol0=1e-10, larget=True, verb=0):
 
     '''
     nk:
@@ -353,7 +371,7 @@ def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=
     #-----------------------------------------
     def _get_cc_id(i_, nk_, nM_):
         '''
-        Maps an index of the circulant matrix (0 <= i_ <= nM_) to the corresponding index
+        Maps an index of the circulant matrix (0 <= i_ <= nM_-1) to the corresponding index
         of the cc matrices above (iq_).
         '''
         assert i_ >= 0 and i_ <= nM_-1
@@ -369,6 +387,9 @@ def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=
 
     
     #==== Build the 3D circulant tensor ====#
+    prefactor = 2 / np.sqrt(np.pi) / nfactor
+    if verb >= 1:
+        time0 = time.time()
     Cr = np.zeros(nM, dtype=complex)
     for i in range(nM[0]):
         iq = _get_cc_id(i, nk[0], nM[0])
@@ -376,34 +397,36 @@ def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=
         for j in range(nM[1]):
             jq = _get_cc_id(j, nk[1], nM[1])
             zero_qy = abs(ccy_q[jq]) < 1E-12
-            print('jj ', i,j, flush=True)
             for k in range(nM[2]):
                 kq = _get_cc_id(k, nk[2], nM[2])
-                #print(k, kq)
                 zero_qz = abs(ccz_q[kq]) < 1E-12
 
                 if all([idq is not None for idq in (iq,jq,kq)]):
+                    q = np.array([ccx_q[iq], ccy_q[jq], ccz_q[kq]])
                     if any([not zero_qx, not zero_qy, not zero_qz]):
-                        q = np.array([ccx_q[iq], ccy_q[jq], ccz_q[kq]])
-                        Cr[i,j,k] = vnuc_elm_tsmall(Jn, zero_qx, ccx[iq,:,:], zero_qy, 
-                                                    ccy[jq,:,:], zero_qz, ccz[kq,:,:], cf_3t)
-                        #Cr[i,j,k] += 2 * np.sqrt(np.pi**3) * np.exp(1j*np.dot(q,c)) / \
-                        #    np.linalg.norm(q)**2
-                        midint = 2 * np.sqrt(np.pi**3) * np.exp(1j*np.dot(q,c)) / np.linalg.norm(q)**2
-                        print(f'ijk: {i}  {j}  {k} | {q[0]:.4f}  {q[1]:.4f}  {q[2]:.4f} | {midint:.6e}  {Cr[i,j,k]:.6e}', flush=True)
-                        Cr[i,j,k] += midint
+                        smallt_part = vnuc_elm_tsmall(Jn, zero_qx, ccx[iq,:,:], zero_qy, 
+                                                      ccy[jq,:,:], zero_qz, ccz[kq,:,:], cf_3t)
+                        if larget:
+                            larget_part = 2 * np.sqrt(np.pi**3) * np.exp(1j*np.dot(q,c)) / np.linalg.norm(q)**2
+                        else:
+                            larget_part = complex(0.0, 0.0)
                     else:
-                        Cr[i,j,k] = complex(0.0, 0.0)    # calc_vnuc_elm_q0()
+                        smallt_part = complex(0.0, 0.0)
+                        larget_part = vnuc_elm_q0(c, xlim, ylim, zlim, w, nu=nu0, atol=atol0,
+                                                  rtol=rtol0)
+                    Cr[i,j,k] = prefactor * (larget_part + smallt_part)
+                    print(f'ijk: {i}  {j}  {k} | {q[0]:.4f}  {q[1]:.4f}  {q[2]:.4f} | {larget_part:.6e}  {smallt_part:.6e}', flush=True)
                         
-                    Cr[i,j,k] *= 2 / np.sqrt(np.pi) / nfactor
-                        
-                    
+
+    if verb >= 1:
+        print('Chebyshev elapsed time = %.3f s' % (time.time() - time0), flush=True)
     return Cr
 #===============================================================
 
     
 #===============================================================
-def calc_vnuc_circulant_ts(c, nk, qint, nM, w, xlim, ylim, zlim, nfactor=1.0):
+def calc_vnuc_circulant_ts(c, nk, qint, nM, w, xlim, ylim, zlim, nfactor=1.0, nu0=6, rtol=1e-13,
+                           atol=1e-13, rtol0=1e-10, atol0=1e-10, larget=True, verb=0):
 
 
     #---------------------------------
@@ -450,11 +473,11 @@ def calc_vnuc_circulant_ts(c, nk, qint, nM, w, xlim, ylim, zlim, nfactor=1.0):
         return iq_
     #-----------------------------------------
 
-    #def _calc_F_tsmall(t, qx, qy, qz):
-    #    t = np.squeeze(t)
-    #    return exact.calc_F_tsmall(t, c, xlim, ylim, zlim, w, np.array([qx,qy,qz]))
     
     #==== Build the 3D circulant tensor ====#
+    prefactor = 2 / np.sqrt(np.pi) / nfactor
+    if verb >= 1:
+        time0 = time.time()
     Cr = np.zeros(nM, dtype=complex)
     for i in range(nM[0]):
         iq = _get_cc_id(i, nk[0], nM[0])
@@ -462,36 +485,33 @@ def calc_vnuc_circulant_ts(c, nk, qint, nM, w, xlim, ylim, zlim, nfactor=1.0):
         for j in range(nM[1]):
             jq = _get_cc_id(j, nk[1], nM[1])
             zero_qy = abs(ccy_q[jq]) < 1E-12
-            print('jj ', i,j, flush=True)
             for k in range(nM[2]):
                 kq = _get_cc_id(k, nk[2], nM[2])
                 zero_qz = abs(ccz_q[kq]) < 1E-12
 
                 if all([idq is not None for idq in (iq,jq,kq)]):
+                    q = np.array([ccx_q[iq], ccy_q[jq], ccz_q[kq]])
                     if any([not zero_qx, not zero_qy, not zero_qz]):
-                        q = np.array([ccx_q[iq], ccy_q[jq], ccz_q[kq]])
-
-                        _calc_F_tsmall = partial(exact.calc_F_tsmall,
-                                                 c=c, xlim=xlim, ylim=ylim, zlim=zlim, w=w, q=q)
-                        Cr[i,j,k] = tanhsinh(_calc_F_tsmall, 0.0, np.inf, rtol=1e-21,
-                                             atol=1e-21).integral
-                        #Cr[i,j,k] = trapezoidal_integral(_calc_F_tsmall, 0.0, 0.007, 1000)
-
-                        #Cr[i,j,k] = tanhsinh(_calc_F_tsmall, 0.0, np.inf,
-                        #                     args=(c, xlim, ylim, zlim, w, q), rtol=1e-12,
-                        #                     atol=1e-12)
-
-                        #Cr[i,j,k] = tanhsinh(_calc_F_tsmall, 0.0, np.inf,
-                        #                     args=(q[0], q[1], q[2]), rtol=1e-8,
-                        #                     atol=1e-8)
-
-                        midint = 2 * np.sqrt(np.pi**3) * np.exp(1j*np.dot(q,c)) / np.linalg.norm(q)**2
-                        print(f'ref ijk: {i}  {j}  {k} | {q[0]:.4f}  {q[1]:.4f}  {q[2]:.4f} | {midint:.6e}  {Cr[i,j,k]:.6e}', flush=True)
-                        Cr[i,j,k] += midint
+                        _calc_F_tsmall = partial(exact.calc_F,
+                                                 c=c, xlim=xlim, ylim=ylim, zlim=zlim, w=w, q=q,
+                                                 smallt=True)
+                        smallt_part = tanhsinh(_calc_F_tsmall, 0.0, np.inf, rtol=rtol,
+                                               atol=atol).integral
+                        #smallt_part = trapezoidal_integral(_calc_F_tsmall, 0.0, 0.007, 1000)
+                        if larget:
+                            larget_part = 2 * np.sqrt(np.pi**3) * np.exp(1j*np.dot(q,c)) / np.linalg.norm(q)**2
+                        else:
+                            larget_part = complex(0.0, 0.0)
                     else:
-                        Cr[i,j,k] = complex(0.0, 0.0)    # calc_vnuc_elm_q0()
+                        smallt_part = complex(0.0, 0.0)
+                        larget_part = vnuc_elm_q0(c, xlim, ylim, zlim, w, nu=nu0, atol=atol0,
+                                                  rtol=rtol0)
+                    Cr[i,j,k] = prefactor * (larget_part + smallt_part)
+                    print(f'ref ijk: {i}  {j}  {k} | {q[0]:.4f}  {q[1]:.4f}  {q[2]:.4f} | {larget_part:.6e}  {smallt_part:.6e}', flush=True)
                         
-                    Cr[i,j,k] *= 2 / np.sqrt(np.pi) / nfactor
+                    
 
+    if verb >= 1:
+        print('Tanhsinh elapsed time = %.3f s' % (time.time() - time0), flush=True)
     return Cr
 #=====================================================================

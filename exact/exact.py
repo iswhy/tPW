@@ -77,15 +77,14 @@ def calc_G0(t, c, xR, xL, q):
 
         
     
-    shapes = [np.shape(item) for item in G0]
-    unique_shapes = set(shapes)
-    if len(unique_shapes) > 1:
-        for idx, (ti, item, shp) in enumerate(zip(t, G0, shapes)):
-            print('lll', idx, item)
-            if shp != shapes[0]:
-                print(f"Mismatch at idx={idx}, t={ti}: shape={shp}, item={item!r}")
-                #break
-    #print('a2 : ', len(G0))
+    #fordebug shapes = [np.shape(item) for item in G0]
+    #fordebug unique_shapes = set(shapes)
+    #fordebug if len(unique_shapes) > 1:
+    #fordebug     for idx, (ti, item, shp) in enumerate(zip(t, G0, shapes)):
+    #fordebug         print('lll', idx, item)
+    #fordebug         if shp != shapes[0]:
+    #fordebug             print(f"Mismatch at idx={idx}, t={ti}: shape={shp}, item={item!r}")
+    #fordebug             break
 
     if np.ndim(t) == 0:
         return G0.item()
@@ -180,47 +179,70 @@ def calc_E(t, c, xL, xR, w, q):
 
 
 #=====================================================================
-def calc_F_tsmall(t, c, xlim, ylim, zlim, w, q, nfactor=1.0):
+def calc_F(t, c, xlim, ylim, zlim, w, q, smallt=False, nfactor=1.0):
 
+    '''
+    Calculates F(t) = E_x(t) E_y(t) E_z(t) or its small-t part for arbitrary q.
+
+    smallt:
+      If True, only the small-t part is returned. In this case, q must be a nonzero
+      vector for if it is zero, F(t) does not separate into small-t and large-t
+      parts.
+
+    WARNING:
+    This function does not check if q is nonzero, so the user is responsible
+    in ensuring this condition.
+    '''
+    
     if np.ndim(t) == 0:
         tt = np.array([t])
     else:
         tt = np.ravel(t)
-    maskt0 = np.abs(tt) < 1E-12
-    masktn0 = np.abs(tt) >= 1E-12
 
-    #t = np.squeeze(t)
-    #print('            >> calcF q = ', q, np.shape(q))
-    
-    #t = np.atleast_1d(t)
     wallL = (xlim[0], ylim[0], zlim[0])
     wallR = (xlim[1], ylim[1], zlim[1])
     F = np.ones(len(tt), dtype=complex)
     for i in range(3):
-        #print('                 calcF q = ', i, q[i], type(q[i]))
         F *= calc_E(tt, c[i], wallL[i], wallR[i], w, q[i])
 
-    #for i, t_ in enumerate(np.atleast_1d(t)):
-    #    if abs(t_) < 1E-12:
-    #        F[i] -= 0.0
-    #    else:
-    #        F[i] -= np.sqrt(np.pi**3) / t_**3 * \
-    #            np.exp(1j*np.dot(q,c) - np.linalg.norm(q)**2/(4*t_**2))
-
-    F[masktn0] -= np.sqrt(np.pi**3) / tt[masktn0]**3 * \
-                np.exp(1j*np.dot(q,c) - np.linalg.norm(q)**2/(4*tt[masktn0]**2))
-    F[maskt0] -= 0.0
-    
-    #print('t F = ', t, F)
-    #print(' *** F shape =', F.shape)
+    #==== Removing the large-t part ====#
+    if smallt:
+        #vv F calculated above contains the exact small-t and large-t parts. Below, the
+        # large-t part is substracted out. The large-t part corresponds to the integral
+        # over the whole space, that means it is undefined when |q| = 0.
+        assert np.linalg.norm(q) >= 1E-12, 'When smallt is True, q must be nonzero.'
+        maskt0 = np.abs(tt) < 1E-12
+        masktn0 = np.abs(tt) >= 1E-12
+        F[masktn0] -= np.sqrt(np.pi**3) / tt[masktn0]**3 * \
+                    np.exp(1j*np.dot(q,c) - np.linalg.norm(q)**2/(4*tt[masktn0]**2))
+        F[maskt0] -= 0.0
 
     if np.ndim(t) == 0:
         return F.item() / nfactor
     else:
         return F.reshape(t.shape) / nfactor
-    
-    #return F
 #=====================================================================
+
+
+##=====================================================================
+#def calc_F_q0(t, c, xlim, ylim, zlim, w, nfactor=1.0):
+#
+#    if np.ndim(t) == 0:
+#        tt = np.array([t])
+#    else:
+#        tt = np.ravel(t)
+#        
+#    wallL = (xlim[0], ylim[0], zlim[0])
+#    wallR = (xlim[1], ylim[1], zlim[1])
+#    F = np.ones(len(tt), dtype=complex)
+#    for i in range(3):
+#        F *= calc_E(tt, c[i], wallL[i], wallR[i], w, 0.0)
+#
+#    if np.ndim(t) == 0:
+#        return F.item() / nfactor
+#    else:
+#        return F.reshape(t.shape) / nfactor
+##=====================================================================
 
 
 #=====================================================================
