@@ -180,8 +180,10 @@ yL = -800.0
 yR =  800.0
 zL = -1000.0
 zR =  1000.0
-wexp = 10.0
-q = np.array([0.0, -0.0, 0.5])
+wexp = 100.0
+q = np.array([0.0, 0.0, 0.5])
+q = np.array([0.0, 0.0, 0.0])
+#q = np.array([0.08, 0.08, 0.04])
 #q = np.array([1.0, 1.0, 2.0])
 nsmall = 500
 nlarge = 500
@@ -195,13 +197,25 @@ wspace = 0.2
 
 wallL = (xL, yL, zL)
 wallR = (xR, yR, zR)
+xlim = (wallL[0], wallR[0])
+ylim = (wallL[1], wallR[1])
+zlim = (wallL[2], wallR[2])
+nfactor = \
+    (xlim[1] - xlim[0] + 2*wexp) * \
+    (ylim[1] - ylim[0] + 2*wexp) * \
+    (zlim[1] - zlim[0] + 2*wexp)
 nu = 3
-max_width = max( [nu * max(1/abs(c[i]-wallL[i]), 1/abs(wallR[i]-c[i])) for i in range(3)] )
-min_onset = min( [ np.sqrt(q_**2/4/12*(9-np.sqrt(33))) for q_ in q[abs(q)>0.0] ] )
-print(f'Max. small-t part width = {max_width:.3e}')
-print(f'Min. large-t part onset = {min_onset:.3e}')
+if np.linalg.norm(q) >= 1E-12:
+    max_width = max( [nu * max(1/abs(c[i]-wallL[i]), 1/abs(wallR[i]-c[i])) for i in range(3)] )
+    min_onset = min( [ np.sqrt(q_**2/4/12*(9-np.sqrt(33))) for q_ in q[abs(q)>0.0] ] )
+else:
+    max_width = 0.01
+    min_onset = 1.1 * max_width
 assert max_width < min_onset, 'Consider decreasing nu.'
 t_boundary = min(2*max_width, (max_width+min_onset)/2)
+print(f'Max. small-t part width = {max_width:.3e}')
+print(f'Min. large-t part onset = {min_onset:.3e}')
+print(f'Small-t and large-t boundary = {t_boundary:.3e}')
 tsmall = np.linspace(0.0, t_boundary, nsmall)
 tlarge = np.linspace(t_boundary, tlast, nlarge)
 xsmall = (tsmall[0], tsmall[-1])
@@ -214,37 +228,51 @@ F_large = np.ones(len(tlarge), dtype=complex)
 F_small_ex = np.ones(len(tsmall), dtype=complex)
 F_large_ex = np.ones(len(tlarge), dtype=complex)
 
+
+
+
+
+#==== Exact reference F(t) ====#
+F_small_ex = exact.calc_F(tsmall, c, xlim, ylim, zlim, wexp, q, False, nfactor=nfactor)
+F_large_ex = exact.calc_F(tlarge, c, xlim, ylim, zlim, wexp, q, False, nfactor=nfactor)
+
+
+
+#==== Testing Chebyshev approximation ====#
+print('\nTesting Chebyshev approximation without power capping ...')
 for i in range(3):
+    fname = "E_" + labels[i] + ".pdf"
     #==== Approximate data ====#
-    if abs(q[i]) < 1E-12:
-        if expan == 'T':
-            E_small, E_large = approx.get_E_approx_q0_ty(c[i], wexp, wallL[i], wallR[i], Napp, tsmall, tlarge)
-        elif expan == 'C':
-            E_small, E_large = approx.get_E_approx_q0_cb(c[i], wexp, wallL[i], wallR[i], Napp, tsmall, tlarge, nu)
+    if np.linalg.norm(q) >= 1E-12:
+        if abs(q[i]) < 1E-12:
+            if expan == 'T':
+                E_small, E_large = approx.get_E_approx_q0_ty(c[i], wexp, wallL[i], wallR[i], Napp, tsmall, tlarge)
+            elif expan == 'C':
+                E_small, E_large = approx.get_E_approx_q0_cb(c[i], wexp, wallL[i], wallR[i], Napp, tsmall, tlarge, nu)
+        else:
+            if expan == 'T':
+                E_small, E_large = approx.get_E_approx_ty(c[i], q[i], wexp, wallL[i], wallR[i], Napp, tsmall, tlarge)
+            elif expan == 'C':
+                E_small, E_large = approx.get_E_approx_cb(c[i], q[i], wexp, wallL[i], wallR[i], Napp, tsmall, tlarge, nu)
     else:
-        if expan == 'T':
-            E_small, E_large = approx.get_E_approx_ty(c[i], q[i], wexp, wallL[i], wallR[i], Napp, tsmall, tlarge)
-        elif expan == 'C':
-            E_small, E_large = approx.get_E_approx_cb(c[i], q[i], wexp, wallL[i], wallR[i], Napp, tsmall, tlarge, nu)
+        print('!!! WARNING !!! Numerically zero vector q is detected. The approximate E(t) functions are ' +
+              f'set to zero in this case. This can be seen in {fname}.')
+        E_small = np.zeros(len(tsmall), dtype=complex)
+        E_large = np.zeros(len(tlarge), dtype=complex)
 
     F_small *= E_small
     F_large *= E_large
 
-
-    #==== Exact data ====#
+    #==== Exact E(t) ====#
     E_small_ex = exact.calc_E(tsmall, c[i], wallL[i], wallR[i], wexp, q[i]) / (wallR[i] - wallL[i] + 2*wexp)
     E_large_ex = exact.calc_E(tlarge, c[i], wallL[i], wallR[i], wexp, q[i]) / (wallR[i] - wallL[i] + 2*wexp)
-
-    F_small_ex *= E_small_ex
-    F_large_ex *= E_large_ex
-
-
-    plot_data(tsmall, E_small, E_small_ex, tlarge, E_large, E_large_ex, filename="E_"+labels[i]+".pdf", 
+    
+    plot_data(tsmall, E_small, E_small_ex, tlarge, E_large, E_large_ex, filename=fname, 
               figsize=figsize, margins=margins, wspace=0.3, xlim1=xsmall, xlim2=xlarge, 
               lb_prev=rf'$E_{{{labels[i]}}}(t)$', title=rf'$q_{{{labels[i]}}}={q[i]:.3f}$')
 
 
-#==== PLotting approximate and exact F ====#
+#==== Plots ====#
 plot_data(tsmall, F_small, F_small_ex, tlarge, F_large, F_large_ex, filename="F.pdf",
           figsize=figsize, margins=margins, wspace=0.3, xlim1=xsmall, xlim2=xlarge,
           lb_prev=rf'$F(t)$', title=f'F(t) for q = ({q[0]:.3f}  {q[1]:.3f}  {q[2]:.3f})')
@@ -267,10 +295,17 @@ print(f'  - Real part = {np.max( np.abs(error_large.real) ):.8e} \n' +
 
 
 
-F_small_pl, F_large_pl = pwcb.get_F_approx_pl(c, q, wexp, wallL, wallR, Napp, tsmall, tlarge, nu,
-                                              (wallR[0] - wallL[0] + 2*wexp) * \
-                                              (wallR[1] - wallL[1] + 2*wexp) * \
-                                              (wallR[2] - wallL[2] + 2*wexp))
+#==== Testing power-capped Chebyshev approximation ====#
+print('\nTesting Chebyshev approximation with power capping ...')
+if np.linalg.norm(q) >= 1E-12:
+    F_small_pl, F_large_pl = pwcb.get_F_approx_pl(c, q, wexp, wallL, wallR, Napp, tsmall, tlarge, nu,
+                                                  nfactor)
+else:
+    print('!!! WARNING !!! Numerically zero vector q is detected. The approximate F(t) functions are ' +
+          'set to zero in this case. This can be seen in F_pl.pdf')
+    F_small_pl = np.zeros(len(tsmall), dtype=complex)
+    F_large_pl = np.zeros(len(tlarge), dtype=complex)
+
 plot_data(tsmall, F_small_pl, F_small_ex, tlarge, F_large_pl, F_large_ex, filename="F_pl.pdf",
           figsize=figsize, margins=margins, wspace=0.3, xlim1=xsmall, xlim2=xlarge,
           lb_prev=rf'$F(t)$', title=f'F(t) for q = ({q[0]:.3f}  {q[1]:.3f}  {q[2]:.3f})')
@@ -294,20 +329,20 @@ print(f'  - Real part = {np.max( np.abs(error_large.real) ):.8e} \n' +
 
 
 
-nfactor = (wallR[0] - wallL[0] + 2*wexp) * \
-    (wallR[1] - wallL[1] + 2*wexp) * \
-    (wallR[2] - wallL[2] + 2*wexp)
-#nfactor = 1.0
-assert np.linalg.norm(q) >= 1E-12, 'The following codes only works on nonzero |q|.'
-F_small_pl2 = exact.calc_F(tsmall, c, (wallL[0], wallR[0]), (wallL[1], wallR[1]), (wallL[2], wallR[2]), wexp, q, True, nfactor)
-F_large_pl2 = exact.calc_F(tlarge, c, (wallL[0], wallR[0]), (wallL[1], wallR[1]), (wallL[2], wallR[2]), wexp, q, True, nfactor)
-plot_data(tsmall, F_small_pl2, F_small_ex, tlarge, F_large_pl2, F_large_ex, filename="F_pl2.pdf",
-          figsize=figsize, margins=margins, wspace=0.3, xlim1=xsmall, xlim2=xlarge,
-          lb_prev=rf'$F(t)$', title=f'F(t) for q = ({q[0]:.3f}  {q[1]:.3f}  {q[2]:.3f})')
-print('\n !!! WARNING !!! The dashed lines in the large-t portion of F_pl2.pdf is just a dummy small-valued function.\n')
-
-_calc_F_tsmall = partial(exact.calc_F,
-                         c=c, xlim=(wallL[0], wallR[0]), ylim=(wallL[1], wallR[1]),
-                         zlim=(wallL[2], wallR[2]), w=wexp, q=q, smallt=True, nfactor=nfactor)
-intcheck = 2 / np.sqrt(np.pi) * pwcb.trapezoidal_integral(_calc_F_tsmall, 0.0, 0.005, 5000)
-print(f'Integral of the small-t part = {intcheck:.10e}')
+#==== Testing the exact small-t part of F ====#
+if np.linalg.norm(q) >= 1E-12:
+    #==== The following codes only works on nonzero |q| ====#
+    _calc_F_tsmall = partial(exact.calc_F,
+                             c=c, xlim=(wallL[0], wallR[0]), ylim=(wallL[1], wallR[1]),
+                             zlim=(wallL[2], wallR[2]), w=wexp, q=q, smallt=True, nfactor=nfactor)
+    #OLD F_small_ex2 = exact.calc_F(tsmall, c, xlim, ylim, zlim, wexp, q, True, nfactor)
+    F_small_ex2 = _calc_F_tsmall(tsmall)
+    dummy1 = np.zeros(len(tlarge)) 
+    plot_data(tsmall, F_small_ex2, F_small_ex, tlarge, dummy1, dummy1, filename="F_small.pdf",
+              figsize=figsize, margins=margins, wspace=0.3, xlim1=xsmall, xlim2=xlarge,
+              lb_prev=rf'$F(t)$', title=f'F(t) for q = ({q[0]:.3f}  {q[1]:.3f}  {q[2]:.3f})')
+    print('\n !!! WARNING !!! The dashed lines in the large-t portion of F_small.pdf is just a dummy 0-valued function.\n')
+    
+    #==== Checking the integral of the small-t part ====#
+    intcheck = 2 / np.sqrt(np.pi) * pwcb.trapezoidal_integral(_calc_F_tsmall, 0.0, 0.005, 5000)
+    print(f'Integral of the small-t part = {intcheck:.10e}')

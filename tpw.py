@@ -8,6 +8,8 @@ import cint_gpw as aopw_xn
 from pyscf import scf, gto, ao2mo
 from pyscf.tools import fcidump
 from tPW.ftn.f_tpw import FTPW_orthogonalize
+import tPW.pwcb.pwcb as pwcb
+
 
 
 
@@ -525,6 +527,109 @@ def get_vnuc_cross(mol, pw_k, xlim, ylim, zlim, w):
     elif INTS_ALGO == 'xn':
         with aopw_xn.prepare(mol) as opt:
             return aopw_xn.nuc(mol, pw_k, opt=opt).T / np.sqrt(Volume)
+#============================================================
+
+
+#============================================================
+def get_vnuc_tpw(mol, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, N, lbound=0.0,
+                 nu=4, nu0=6, nfactor=1.0, rtol0=1e-10, atol0=1e-10, larget=True):
+
+
+    nkx = len(kxvec)
+    nky = len(kyvec)
+    nkz = len(kzvec)
+
+    V = np.zeros((nkx*nky*nkz, nkx*nky*nkz), dtype=complex)
+    for i in range(mol.natm):
+        c = mol.atom_coord(i)
+        Zn = mol.atom_charge(i)
+        V += get_vnuc_tpw_ctr(Zn, c, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, N, lbound=0.0,
+                              nu=4, nu0=6, nfactor=1.0, rtol0=1e-10, atol0=1e-10, larget=True)
+    
+    return V
+#============================================================
+
+
+#============================================================
+def get_vnuc_tpw_ctr(Zn, c, kxvec, kyvec, kzvec, xlim, ylim, zlim, w, N, lbound=0.0, 
+                     nu=4, nu0=6, nfactor=1.0, rtol0=1e-10, atol0=1e-10, larget=True):
+
+
+    nkx = len(kxvec)
+    nky = len(kyvec)
+    nkz = len(kzvec)
+
+    #==== Determine the upperbound for the Chebyshev expansion ====#
+    widths = \
+        (1/abs(c[0]-xlim[0]), 1/abs(c[0]-xlim[1]),
+         1/abs(c[1]-ylim[0]), 1/abs(c[1]-ylim[1]),
+         1/abs(c[2]-zlim[0]), 1/abs(c[2]-zlim[1]))
+    ubound = nu * max(widths)
+
+    
+    scalex = ( (c[0] - xlim[0])**2, (c[0] - xlim[1])**2, 0.0 )
+    scaley = ( (c[1] - ylim[0])**2, (c[1] - ylim[1])**2, 0.0 )
+    scalez = ( (c[2] - zlim[0])**2, (c[2] - zlim[1])**2, 0.0 )
+
+    #==== Build Gaussian moment tensor ====#
+    Jn = np.zeros((3,3,3,N+1))
+    for i in range(3):
+        for j in range(3):
+            for k in range(3):
+
+                exp_scale = scalex[i] + scaley[j] + scalez[k]
+                if any([jj != 2 for jj in (i,j,k)]):
+                    Jn[i,j,k,:] = pwcb.get_gauss_moment(2/(ubound-lbound), (ubound+lbound)/(ubound-lbound),
+                                                   np.sqrt(exp_scale), N)
+                
+
+    c_eye = np.eye(N+1)
+    tx = np.zeros((N+1,N+1))
+    for i in range(N+1):
+        tx[i,:i+1] = np.polynomial.chebyshev.cheb2poly(c_eye[i,:])
+    ty = tx
+    tz = tx
+    cf_3t = pwcb.get_sum_ttt(tx, ty, tz)
+
+
+    prefactor = - Zn * 2 / np.sqrt(np.pi) / nfactor
+    V = np.zeros((nkx*nky*nkz, nkx*nky*nkz), dtype=complex)
+    for i1, kx1 in enumerate(kxvec):
+        for j1, ky1 in enumerate(kyvec):
+            for k1, kz1 in enumerate(kzvec):
+                I1 = i1*nky*nkz + j1*nkz + k1
+
+                print(i1,j1,k1)
+                for i2, kx2 in enumerate(kxvec):
+                    for j2, ky2 in enumerate(kyvec):
+                        for k2, kz2 in enumerate(kzvec):
+                            I2 = i2*nky*nkz + j2*nkz + k2
+
+                            if I1 >= I2:
+                                if i1 != i2 or j1 != j2 or k1 != k2:
+                                    q = np.array([kx2 - kx1, ky2 - ky1, kz2 - kz1])
+                                    ccx = pwcb.get_coeff_LR_cb(c[0], q[0], w, xlim[0], xlim[1], N,
+                                                               lbound, ubound)
+                                    ccy = pwcb.get_coeff_LR_cb(c[1], q[1], w, ylim[0], ylim[1], N,
+                                                               lbound, ubound)
+                                    ccz = pwcb.get_coeff_LR_cb(c[2], q[2], w, zlim[0], zlim[1], N,
+                                                               lbound, ubound)
+                                    
+                                    smallt_part = pwcb.vnuc_elm_tsmall(Jn, i1==i2, ccx, j1==j2, 
+                                                                  ccy, k1==k2, ccz, cf_3t)
+                                    if larget:
+                                        larget_part = 2 * np.sqrt(np.pi**3) * \
+                                            np.exp(1j*np.dot(q,c)) / np.linalg.norm(q)**2
+                                    else:
+                                        larget_part = complex(0.0, 0.0)
+                                else:
+                                    smallt_part = complex(0.0, 0.0)
+                                    larget_part = pwcb.vnuc_elm_q0(c, xlim, ylim, zlim, w, nu=nu0, 
+                                                              atol=atol0, rtol=rtol0)
+                                V[I1, I2] = prefactor * (larget_part + smallt_part)
+                                V[I2, I1] = np.conj(V[I1,I2])
+
+    return V
 #============================================================
 
 

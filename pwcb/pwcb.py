@@ -220,11 +220,11 @@ def vnuc_elm_q0(c, xlim, ylim, zlim, w, nu=6, atol=1E-10, rtol=1E-10):
 
     _calc_F_q0 = partial(exact.calc_F,
                          c=c, xlim=xlim, ylim=ylim, zlim=zlim, w=w, q=np.zeros(3))
-    result, error_estimate = quad(lambda x: np.real(_calc_F_q0(x)), 0.0, ubound, epsabs=atol,
+    elm, error_est = quad(lambda x: np.real(_calc_F_q0(x)), 0.0, ubound, epsabs=atol,
                                   epsrel=rtol)
-    result += np.sqrt(np.pi**3) * 1/2 * ubound**2
+    elm += np.sqrt(np.pi**3) * 1/(2*ubound**2)
     
-    return result
+    return elm
 #===============================================================
 
 
@@ -274,8 +274,8 @@ def trapezoidal_integral(f, a, b, n=1000):
 
 
 #===============================================================
-def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=4, nu0=6, nfactor=1.0,
-                        rtol0=1e-10, atol0=1e-10, larget=True, verb=0):
+def calc_vnuc_circulant(Zn, c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=4, nu0=6, 
+                        nfactor=1.0, rtol0=1e-10, atol0=1e-10, larget=True, verb=0):
 
     '''
     nk:
@@ -284,8 +284,11 @@ def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=
       A tuple of three elements, the interval of k points in each Cartesian direction.
     nM:
       A tuple of three elements, the dimensions of the circulant matrix.
+    larget:
+      If True (default), the matrix elements include a contribution from the large-t part of F.
+      Otherwise, this contribution is set to zero. The case of larget=False is mainly used for
+      debugging.
     '''
-
 
     #==== Determine the upperbound for the Chebyshev expansion ====#
     widths = \
@@ -387,7 +390,7 @@ def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=
 
     
     #==== Build the 3D circulant tensor ====#
-    prefactor = 2 / np.sqrt(np.pi) / nfactor
+    prefactor = - Zn * 2 / np.sqrt(np.pi) / nfactor
     if verb >= 1:
         time0 = time.time()
     Cr = np.zeros(nM, dtype=complex)
@@ -415,7 +418,8 @@ def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=
                         larget_part = vnuc_elm_q0(c, xlim, ylim, zlim, w, nu=nu0, atol=atol0,
                                                   rtol=rtol0)
                     Cr[i,j,k] = prefactor * (larget_part + smallt_part)
-                    print(f'ijk: {i}  {j}  {k} | {q[0]:.4f}  {q[1]:.4f}  {q[2]:.4f} | {larget_part:.6e}  {smallt_part:.6e}', flush=True)
+                    print(f'ijk: {i}  {j}  {k} | {q[0]:.4f}  {q[1]:.4f}  {q[2]:.4f} | ' +
+                          f'{prefactor*larget_part:.6e}  {prefactor*smallt_part:.6e}', flush=True)
                         
 
     if verb >= 1:
@@ -425,10 +429,16 @@ def calc_vnuc_circulant(c, nk, qint, nM, w, xlim, ylim, zlim, N, lbound=0.0, nu=
 
     
 #===============================================================
-def calc_vnuc_circulant_ts(c, nk, qint, nM, w, xlim, ylim, zlim, nfactor=1.0, nu0=6, rtol=1e-13,
+def calc_vnuc_circulant_ts(Zn, c, nk, qint, nM, w, xlim, ylim, zlim, nfactor=1.0, nu0=6, rtol=1e-13,
                            atol=1e-13, rtol0=1e-10, atol0=1e-10, larget=True, verb=0):
 
-
+    '''
+    larget:
+      If True (default), the matrix elements include a contribution from the large-t part of F.
+      Otherwise, this contribution is set to zero. The case of larget=False is mainly used for
+      debugging.
+    '''
+    
     #---------------------------------
     def _get_nrow(ii):
         return 3 if ii==0 else 2
@@ -475,7 +485,7 @@ def calc_vnuc_circulant_ts(c, nk, qint, nM, w, xlim, ylim, zlim, nfactor=1.0, nu
 
     
     #==== Build the 3D circulant tensor ====#
-    prefactor = 2 / np.sqrt(np.pi) / nfactor
+    prefactor = - Zn * 2 / np.sqrt(np.pi) / nfactor
     if verb >= 1:
         time0 = time.time()
     Cr = np.zeros(nM, dtype=complex)
@@ -497,6 +507,13 @@ def calc_vnuc_circulant_ts(c, nk, qint, nM, w, xlim, ylim, zlim, nfactor=1.0, nu
                                                  smallt=True)
                         smallt_part = tanhsinh(_calc_F_tsmall, 0.0, np.inf, rtol=rtol,
                                                atol=atol).integral
+
+                        #rpart, _ = quad(lambda x: np.real(_calc_F_tsmall(x)), 0.0, np.inf, epsabs=atol,
+                        #                epsrel=rtol)
+                        #ipart, _ = quad(lambda x: np.imag(_calc_F_tsmall(x)), 0.0, np.inf, epsabs=atol,
+                        #                epsrel=rtol)
+                        #smallt_part = complex(rpart, ipart)
+                        
                         #smallt_part = trapezoidal_integral(_calc_F_tsmall, 0.0, 0.007, 1000)
                         if larget:
                             larget_part = 2 * np.sqrt(np.pi**3) * np.exp(1j*np.dot(q,c)) / np.linalg.norm(q)**2
@@ -507,11 +524,37 @@ def calc_vnuc_circulant_ts(c, nk, qint, nM, w, xlim, ylim, zlim, nfactor=1.0, nu
                         larget_part = vnuc_elm_q0(c, xlim, ylim, zlim, w, nu=nu0, atol=atol0,
                                                   rtol=rtol0)
                     Cr[i,j,k] = prefactor * (larget_part + smallt_part)
-                    print(f'ref ijk: {i}  {j}  {k} | {q[0]:.4f}  {q[1]:.4f}  {q[2]:.4f} | {larget_part:.6e}  {smallt_part:.6e}', flush=True)
+                    print(f'ref ijk: {i}  {j}  {k} | {q[0]:.4f}  {q[1]:.4f}  {q[2]:.4f} |' +
+                          f' {prefactor*larget_part:.6e}  {prefactor*smallt_part:.6e}', flush=True)
                         
                     
 
     if verb >= 1:
         print('Tanhsinh elapsed time = %.3f s' % (time.time() - time0), flush=True)
+        
     return Cr
+#=====================================================================
+
+
+#=====================================================================
+def matvec_3d_toeplitz(FCr, x, N_dims):
+
+    """
+    Computes T @ x for a 3-level block-Toeplitz matrix using 3D FFT.
+
+    FCr:
+      Fcr = np.fft.fftn(Cr)
+    """
+    
+    N1, N2, N3 = N_dims
+    M1, M2, M3 = FCr.shape
+  
+    X = np.asarray(x, dtype=np.complex128).reshape((N1, N2, N3))
+    X_pad = np.zeros((M1, M2, M3), dtype=np.complex128)
+    X_pad[:N1, :N2, :N3] = X
+  
+    #Y_pad = np.fft.ifftn(np.fft.fftn(c) * np.fft.fftn(X_pad))
+    Y_pad = np.fft.ifftn(FCr * np.fft.fftn(X_pad))
+
+    return Y_pad[:N1, :N2, :N3].reshape(-1)
 #=====================================================================
